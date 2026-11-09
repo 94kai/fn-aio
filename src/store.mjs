@@ -32,7 +32,7 @@ export function validateServices(items,policy){
   if(!Array.isArray(items)||items.length>50)throw fail('最多配置 50 个服务');
   const ids=new Set();
   return items.map(item=>{
-    if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','name','host','port','basePath','upstreamAuthority','enabled'].includes(key)))throw fail('服务字段无效');
+    if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','name','host','port','basePath','upstreamAuthority','enabled','note'].includes(key)))throw fail('服务字段无效');
     if(typeof item.id!=='string'||!/^[a-z][a-z0-9-]{0,31}$/.test(item.id)||ids.has(item.id))throw fail('服务标识须为小写字母开头的字母、数字或短横线，且不能重复');ids.add(item.id);
     if(typeof item.name!=='string'||!item.name.trim()||item.name.length>60||/[\x00-\x1f\x7f]/.test(item.name))throw fail('服务名称须为 1～60 字符');
     if(!policy.targetHosts.has(item.host))throw fail('目标地址不在本机允许列表中');
@@ -42,7 +42,9 @@ export function validateServices(items,policy){
     const upstreamAuthority=item.upstreamAuthority??'';
     if(upstreamAuthority!==''&&(typeof upstreamAuthority!=='string'||upstreamAuthority.length>253))throw fail('回源 Host 无效');
     if(upstreamAuthority)authority(upstreamAuthority);
-    return {id:item.id,name:item.name.trim(),host:item.host,port:item.port,basePath,upstreamAuthority,enabled:item.enabled};
+    const note=item.note===undefined?'':item.note;
+    if(typeof note!=='string'||note.length>500||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(note))throw fail('备注须为最多 500 字符的文本');
+    return {id:item.id,name:item.name.trim(),host:item.host,port:item.port,basePath,upstreamAuthority,enabled:item.enabled,note:note.replace(/\r\n?/g,'\n')};
   });
 }
 

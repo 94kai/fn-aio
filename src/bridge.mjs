@@ -63,7 +63,7 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
     if(target.pathname===ROOT){res.writeHead(308,{location:ROOT+'/','cache-control':'no-store'});res.end();return;}
     if(target.pathname===ROOT+'/api/health'){
       if(!['GET','HEAD'].includes(req.method))throw fail('方法不支持',405);
-      json(res,{name:'AIO',version:'0.1.0',privateOnly:true});return;
+      json(res,{name:'AIO',version:'0.1.1',privateOnly:true});return;
     }
     if(target.pathname===ROOT+'/api/services'){
       apiAdmission(req,policy);

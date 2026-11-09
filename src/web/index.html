@@ -19,6 +19,7 @@
 <label>目标端口<input id="port" name="port" type="number" inputmode="numeric" min="1024" max="65535" required value="8080"><small>目前使用 HTTP 回源，不允许回指飞牛的 5666/5667。</small></label>
 <label class="wide">目标基础路径<input id="base-path" name="basePath" required value="/" placeholder="/" spellcheck="false"><small>通常填 /。若服务实际位于 /notes，填 /notes。</small></label>
 <label class="wide">回源 Host（可选）<input id="upstream-authority" name="upstreamAuthority" placeholder="留空使用目标地址及端口" spellcheck="false" autocapitalize="none"><small>仅用于明确要求特定 Host 的后端；不会替代服务自己的登录。</small></label>
+<label class="wide">备注（可选）<textarea id="note" name="note" rows="3" maxlength="500" placeholder="说明服务用途、使用注意事项等" aria-describedby="note-hint"></textarea><small id="note-hint">最多 500 字符，支持换行；会随配置导出，请勿填写密码或令牌。</small></label>
 <label class="check wide"><input id="enabled" name="enabled" type="checkbox" checked>启用此服务</label>
 </div><p class="hint">访问地址自动生成为 /app/aio/s/服务标识/。网页需支持子路径或相对资源地址，AIO 不替换 HTML/JavaScript 内容。</p><div class="form-actions"><button class="primary" type="submit">保存配置</button></div></fieldset></form></section>
 <footer>AIO 独立运行 · 无公开端口 · 原业务服务保持原样</footer>

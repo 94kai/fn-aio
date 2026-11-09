@@ -33,7 +33,7 @@ function render(){
       if(!confirm('仅删除 AIO 转发配置，不会删除文件或停止后端服务。确定删除？'))return;
       await save(state.services.filter(item=>item.id!==service.id));if(editing===service.id)cancel();message('服务配置已删除。');
     })}));
-    const card=element('article',{className:'card'},[heading,element('p',{text:'目标：'+target}),element('p',{className:'address',text:'入口：'+entry(service)}),actions]);
+    const card=element('article',{className:'card'},[heading,...(service.note?[element('p',{className:'service-note',text:service.note})]:[]),element('p',{text:'目标：'+target}),element('p',{className:'address',text:'入口：'+entry(service)}),actions]);
     const result=checks.get(service.id);if(result)card.append(element('p',{className:'result','data-ok':String(result.reachable),role:'status',text:result.message}));container.append(card);
   }updateBusy();
 }
@@ -48,11 +48,12 @@ function edit(service){
   editing=service?.id??null;$('editor-title').textContent=service?'编辑服务':'添加服务';
   $('name').value=service?.name??'';$('id').value=service?.id??'';$('id').disabled=!!service;
   $('host').value=service?.host??state.policy.targetHosts[0];$('port').value=service?.port??8080;$('base-path').value=service?.basePath??'/';$('upstream-authority').value=service?.upstreamAuthority??'';$('enabled').checked=service?.enabled??true;
+  $('note').value=service?.note??'';
   $('editor').hidden=false;$('editor').scrollIntoView({block:'start'});$('name').focus();
 }
 function cancel(){editing=null;$('editor').hidden=true;$('id').disabled=false;$('service-form').reset();}
 $('service-form').addEventListener('submit',event=>{event.preventDefault();run(async()=>{
-  const service={id:$('id').value.trim(),name:$('name').value.trim(),host:$('host').value,port:Number($('port').value),basePath:$('base-path').value.trim(),upstreamAuthority:$('upstream-authority').value.trim(),enabled:$('enabled').checked};
+  const service={id:$('id').value.trim(),name:$('name').value.trim(),host:$('host').value,port:Number($('port').value),basePath:$('base-path').value.trim(),upstreamAuthority:$('upstream-authority').value.trim(),enabled:$('enabled').checked,note:$('note').value};
   if(!editing&&state.services.some(item=>item.id===service.id))throw new Error('服务标识已存在，请换一个标识。');
   if(editing&&!state.services.some(item=>item.id===editing))throw new Error('该服务已被删除，请取消编辑后重新添加。');
   await save(editing?state.services.map(item=>item.id===editing?service:item):[...state.services,service]);cancel();message('服务已保存。可先检查连接，再打开入口。');

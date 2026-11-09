@@ -22,6 +22,15 @@ test('服务文本不作为 HTML 注入，配置请求保护和破坏性操作�
   assert.doesNotMatch(js,/dsh-plugin|@deepseek|\.dsh\//);
 });
 
+test('备注使用可选多行输入、纯文本卡片展示并保留编辑值',()=>{
+  assert.match(html,/<textarea[^>]*id="note"[^>]*maxlength="500"/);
+  assert.match(html,/请勿填写密码或令牌/);
+  assert.match(js,/className:'service-note',text:service.note/);
+  assert.match(js,/\$\('note'\)\.value=service\?\.note\?\?''/);
+  assert.match(js,/note:\$\('note'\)\.value/);
+  assert.match(css,/\.service-note\{white-space:pre-wrap;overflow-wrap:anywhere/);
+});
+
 test('手机和暗色采用局部样式，刷新/操作目标至少 44px，长地址可换行',()=>{
   assert.match(css,/min-height:44px/);assert.match(css,/font-size:16px/);
   assert.match(css,/safe-area-inset-bottom/);assert.match(css,/prefers-color-scheme:dark/);

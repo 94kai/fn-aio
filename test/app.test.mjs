@@ -90,6 +90,30 @@ test('配置增删改持久化、私有权限和前一版本备份',async t=>{
   assert.equal((await f.save([],2)).value.services.length,0);
 });
 
+test('备注兼容旧配置，支持多行持久化、导入和清空且不参与转发',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.save()).value.services[0].note,'');
+  const note='<script>alert(1)</script>\n用途说明\t注意事项';
+  assert.equal((await f.save([{...f.service,note}],1)).value.services[0].note,note);
+  const store=await new Store(f.dataFile,validatePolicy(policy)).init();
+  assert.equal(store.get().services[0].note,note);
+  const exported=(await f.api('GET','services')).value.services;
+  assert.equal((await f.save(exported,2)).value.services[0].note,note);
+  assert.equal((await f.request('GET','/app/aio/s/notes/')).status,200);
+  assert.equal(f.seen[0].url,'/base/');assert.doesNotMatch(JSON.stringify(f.seen[0]),/用途说明|alert\(1\)/);
+  assert.equal((await f.save([{...f.service,note:''}],3)).value.services[0].note,'');
+});
+
+test('备注长度、类型及控制字符校验，拒绝时不修改已有配置',async t=>{
+  const f=await fixture(t);
+  assert.equal((await f.save([{...f.service,note:'备'.repeat(500)}])).status,200);
+  for(const note of ['备'.repeat(501),null,42,{},[],true,'bad\u0000text','bad\u007ftext']){
+    assert.equal((await f.save([{...f.service,note}],1)).status,400);
+  }
+  assert.equal((await f.api('GET','services')).value.revision,1);
+  assert.equal((await f.save([{...f.service,note:'第一行\r\n第二行'}],1)).value.services[0].note,'第一行\n第二行');
+});
+
 test('并发写入按 revision 拒绝旧配置，不丢失已保存修改',async t=>{
   const f=await fixture(t);await f.save();
   const results=await Promise.all([f.save([{...f.service,name:'甲'}],1),f.save([{...f.service,name:'乙'}],1)]);
