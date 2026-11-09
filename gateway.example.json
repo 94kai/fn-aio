@@ -1,0 +1,10 @@
+{
+  "ownerUid": "1000",
+  "allowedOrigins": [
+    "https://your-nas.example",
+    "http://192.168.1.2:5666",
+    "https://192.168.1.2:5667"
+  ],
+  "defaultOrigin": "https://your-nas.example",
+  "targetHosts": ["127.0.0.1", "192.168.1.2"]
+}

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark"><meta name="referrer" content="no-referrer">
+<base href="./"><title>AIO · 服务入口</title>
+<link rel="stylesheet" href="assets/style.css"><script src="assets/app.js" defer></script>
+</head>
+<body><main>
+<header><div class="brand"><span class="logo" aria-hidden="true">AIO</span><div><h1>服务入口</h1><p>统一连接你的 NAS 自建服务</p></div></div><button id="reload" type="button">刷新</button></header>
+<div class="notice"><strong>仅飞牛登录后可访问</strong><span>只转发请求，不安装或启动后端服务。请仅接入你信任的服务，同域网页不具备相互隔离。</span></div>
+<div id="message" class="message" role="status" hidden></div>
+<section class="section"><div class="section-heading"><h2>我的服务 <span id="count"></span></h2><div class="actions"><button id="export" type="button">导出配置</button><button id="import" type="button">导入</button><button id="add" class="primary" type="button">添加服务</button></div></div><p id="loading" class="empty" role="status">正在读取服务配置…</p><div id="services" class="cards"></div></section>
+<section id="editor" class="editor" hidden><div class="section-heading"><h2 id="editor-title">添加服务</h2><button id="cancel" type="button">取消</button></div>
+<form id="service-form"><fieldset id="fields"><div class="form-grid">
+<label>服务名称<input id="name" name="name" required maxlength="60" placeholder="例如：我的笔记"></label>
+<label>服务标识<input id="id" name="id" required pattern="[a-z][a-z0-9-]{0,31}" maxlength="32" placeholder="例如：notes" autocapitalize="none" spellcheck="false"><small>小写字母、数字或短横线；决定访问路径。</small></label>
+<label>本机目标地址<select id="host" name="host" required></select></label>
+<label>目标端口<input id="port" name="port" type="number" inputmode="numeric" min="1024" max="65535" required value="8080"><small>目前使用 HTTP 回源，不允许回指飞牛的 5666/5667。</small></label>
+<label class="wide">目标基础路径<input id="base-path" name="basePath" required value="/" placeholder="/" spellcheck="false"><small>通常填 /。若服务实际位于 /notes，填 /notes。</small></label>
+<label class="wide">回源 Host（可选）<input id="upstream-authority" name="upstreamAuthority" placeholder="留空使用目标地址及端口" spellcheck="false" autocapitalize="none"><small>仅用于明确要求特定 Host 的后端；不会替代服务自己的登录。</small></label>
+<label class="check wide"><input id="enabled" name="enabled" type="checkbox" checked>启用此服务</label>
+</div><p class="hint">访问地址自动生成为 /app/aio/s/服务标识/。网页需支持子路径或相对资源地址，AIO 不替换 HTML/JavaScript 内容。</p><div class="form-actions"><button class="primary" type="submit">保存配置</button></div></fieldset></form></section>
+<footer>AIO 独立运行 · 无公开端口 · 原业务服务保持原样</footer>
+<input id="import-file" type="file" accept="application/json,.json" hidden>
+</main></body></html>

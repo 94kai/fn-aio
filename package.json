@@ -1,0 +1,14 @@
+{
+  "name": "fn-aio",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "独立的飞牛私有应用网关：管理并转发 NAS 自建 HTTP 服务",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "test": "node --test test/*.test.mjs",
+    "verify": "npm run check && npm test",
+    "build": "node scripts/build-fpk.mjs"
+  },
+  "engines": { "node": ">=22" }
+}
