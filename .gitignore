@@ -3,3 +3,9 @@ node_modules/
 *.fpk
 __pycache__/
 .DS_Store
+android/.gradle/
+android/local.properties
+*.apk
+*.aab
+*.jks
+*.keystore

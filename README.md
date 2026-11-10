@@ -1,12 +1,13 @@
 # FN AIO
 
-一个独立的飞牛 App，用一个经过飞牛登录的入口，管理并转发 NAS 上已有的自建 HTTP 服务。它不是 DSH 插件，也不安装、启动或迁移业务服务。
+一个独立的飞牛 App，通过飞牛登录管理 NAS 上已有的自建 HTTP 服务，并提供可选的外部业务转发入口。它不是 DSH 插件，也不安装、启动或迁移业务服务。
 
 ```text
-浏览器 → 飞牛登录与 /app/aio 网关 → AIO Unix Socket → 本机业务服务
+管理与私有访问：浏览器 → 飞牛登录 /app/aio → AIO Unix Socket → 本机业务服务
+可选外部访问：客户端 → Lucky 等 HTTPS 反代 → AIO 回环 HTTP /服务标识/ → 本机业务服务
 ```
 
-**当前只做私有访问，不提供公开 TCP 端口，不实现绕过飞牛登录，不修改 Lucky。**
+**管理入口始终要求飞牛登录。外部业务入口缺省关闭，仅监听回环地址，并要求逐服务显式开放；不修改 Lucky，不直接监听公网。外部服务使用自身登录，不经过飞牛登录。**
 
 ## 使用
 
@@ -23,6 +24,7 @@
 | 基础路径 | `/` | 后端真实路径；若后端在 `/notes`，填 `/notes` |
 | 回源 Host | 留空 | 默认是目标 IP:端口；仅对明确要求特定 Host 的后端填写 |
 | 备注 | 每日笔记与资料 | 可选，多行纯文本，最多 500 字符；显示在服务卡片，不参与转发，请勿填写密码或令牌 |
+| 允许外部访问 | 默认关闭 | 只对该服务开放独立业务入口；确认服务有自身鉴权，管理功能不受此选项影响 |
 
 例如：
 
@@ -35,12 +37,44 @@ http://NAS:5666/app/aio/s/notes/hello?q=1
 
 停用或删除只影响后续转发，不停止后端服务；已建立的连接不强制切断。默认服务列表为空。
 
+## 可选的 Lucky 业务入口（0.2.0）
+
+由管理员在网关策略中配置可选 `publicProxy`（缺省不监听 TCP）：
+
+```json
+"publicProxy": {
+  "listenHost": "127.0.0.1",
+  "port": 19090,
+  "origin": "https://your-nas.example:1025"
+}
+```
+
+这是一段策略字段示例，需加入现有 JSON，不能单独作为完整策略使用。内部端口仅为示例，需确认空闲。
+
+Lucky 监听外部 HTTPS 1025，将所有路径原样转发到 `http://127.0.0.1:19090`，并保留外部 Host（含 1025）。AIO 只接受与固定外部 Origin 匹配的 Host，不依赖客户端的 Forwarded 或飞牛身份 Header。仅支持回环监听；Lucky 若运行于 Docker，需与宿主共享网络或另行设计受控接入，不能用容器自己的 localhost 指向宿主。
+
+管理页逐服务开启外部访问后，地址为 `https://your-nas.example:1025/notes/`；去掉 `/notes` 后按服务基础路径回源。无尾斜杠自动 308，根路径、未知路径、未开放或停用服务返回 404，不列出服务。业务监听器没有管理页面或 API；原私有访问路径不变。
+
+旧服务缺少 `publicAccess` 时按 false 处理；保存和导出包含此字段。旧备份导入会关闭其中未声明的外部访问。旧版程序不接受新字段，降级需先备份并移除。业务策略的外部 Origin 必须使用独立 HTTPS 端口或域名，不得与飞牛管理 Origin 相同；不能把业务入口端口作为后端以免循环。
+
+完整配置、Lucky 注意事项、Vaultwarden 子路径和安全边界见[业务入口手册](<docs/public-proxy.md>)。
+
+## Android 专用入口原型
+
+独立的 **dsh** Android WebView 应用（原名 AIO 直达；0.3.1，Android 8.0+，DeepSeek 鲸鱼桌面图标）：无顶部菜单，34dp 视觉/44dp 触控的半透明可拖动悬浮球向下展开“切换访问方式 / 刷新当前页面 / 下载管理”。支持 FN ID 与独立 HTTPS 业务入口切换并记住选择；仅 FN ID 模式检查飞牛登录，失效时进入官方首页并在恢复后返回服务，直连模式不做飞牛认证处理。当前 Origin 内正常导航，外站交给浏览器，支持用户触发的新窗口链接；返回键先收起菜单、再网页后退，第一页才确认退出，兼容 Android 13+ 返回手势。保留 App 私有 Cookie，不保存 NAS 密码，不修改 NAS 网关，不保证永久免登录；首次登录、2FA 和必要认证交互仍由用户完成。
+
+0.2.1 增加下载另存为：支持当前服务的 Cookie 鉴权 HTTPS 文件及网页 blob/data 导出，通过系统保存器选位置，单文件上限 256 MiB，不申请广泛存储权限或新增原生 JS 桥。特殊 POST/Bearer/跨站 CDN 下载仍需逐个适配，真实手机保存流程尚待用户验收。
+
+0.3.0 新增原生下载管理：最近 100 条记录，显示时间/大小/实际阶段进度，支持取消、打开、分享和仅清除记录。已完成文件通过用户选定的 document URI 在手机查看器中打开，保留该文件的只读授权，不依赖 NAS 桌面；不记录来源 URL/Cookie，不扫描旧文件，升级前的下载无法追溯恢复。
+
+源码位于 [Android 项目](<android/app/src/main/java/top/fnaio/direct/MainActivity.java>)，构建、隐私边界和真机验收步骤见 [Android 使用说明](<docs/android.md>)。APK 与构建产物全部位于被忽略的 `.local/`；安卓编译成功不代表手机登录链路已验收。
+
 ## 兼容边界
 
 - 支持 HTTP、WebSocket、流式上传/响应、文件 Range 和常见重定向。
 - 网页应支持子路径或相对资源地址。AIO 提供 `X-Forwarded-Prefix`，但不通过替换 HTML/JavaScript 强行兼容写死根路径的网站。
 - 后端自己的登录仍保留，不将飞牛身份自动转换为业务管理员身份。
-- Cookie 名称会加服务前缀，路径限定在该服务挂载点，防止 NAS Cookie 或其他服务 Cookie 被转给目标。需要 JavaScript 读取固定 Cookie 名的应用可能需适配。
+- Cookie 名称会加服务前缀，外部业务还使用独立前缀，路径限定在该入口的服务挂载点，防止 NAS Cookie、其他服务或私有/外部入口的 Cookie 相互转发。两个入口需分别业务登录。需要 JavaScript 读取固定 Cookie 名的应用可能需适配。
 - 第三方 OAuth 的回调、绝对资源地址、Service Worker、重定向到挂载外等需要逐个核对；不保证任意网站零修改接入。
 - 所有服务页面与飞牛管理入口共享浏览器 Origin。**只接入你信任的自建服务；路径和 Cookie 前缀不是对恶意网页的浏览器安全隔离。**
 - 第一版仅支持本机明文 HTTP 回源，不提供任意 TCP/UDP、HTTPS 回源、容器管理或多用户权限编辑。指定所有者必须是飞牛管理员。
@@ -66,9 +100,9 @@ sudo appcenter-cli install-fpk /构建目录/aio.fpk --volume 1
 sudo appcenter-cli start aio
 ```
 
-安装前确认 `/var/apps/aio` 没有被其他应用占用。AIO 使用专用包用户 `aio`，通过[飞牛统一应用网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)注册 `/app/aio`，只监听权限 0600 的 Unix Socket。
+安装前确认 `/var/apps/aio` 没有被其他应用占用。AIO 使用专用包用户 `aio`，通过[飞牛统一应用网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)注册 `/app/aio`，管理入口使用权限 0600 的 Unix Socket；可选业务入口仅监听策略指定的回环地址。
 
-策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
+策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `publicProxy`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
 
 **忘记怎么配置时，请看[配置、白名单与排障手册](<docs/configuration.md>)**：包含生产路径、各字段含义、不同域名/端口的白名单规则、安全添加命令、备份、JSON/策略校验、仅重启 AIO、403/10330 排障及回滚步骤。修改生产策略后，还要同步 `.local/gateway.json`，避免下次构建覆盖。
 
@@ -77,10 +111,10 @@ sudo appcenter-cli start aio
 - 服务配置保存在 AIO 私有 var 目录的 `services.json`；前一版本保存在 `services.json.previous`，文件权限 0600。
 - JSON 结构为 `{schemaVersion:1, revision, services:[...]}`。写入经过校验、进程内队列和 revision 冲突保护，再原子替换；损坏配置拒绝启动，不覆盖原文件。
 - `GET /app/aio/api/services`、`PUT /app/aio/api/services`、`POST /app/aio/api/services/{id}/check` 仅接受指定所有者且为管理员，通过同源请求标记校验；写入还需要匹配的 Origin 和 JSON。
-- 只有飞牛能连接私有 Socket；应用校验其提供的用户身份。没有飞牛登录的公网请求不能靠伪造身份 Header 进入。
-- 请求头上限 32 KiB，管理 JSON 上限 128 KiB，最多 50 个服务和 128 个连接；业务上传流式转发，文件大小由后端自行限制。连通检查 5 秒超时且不跟随重定向。目标必须是策略列出的当前 NAS 本机接口 IP，不接受任意 DNS 或外部公网目标。
+- 私有管理 Socket 校验飞牛提供的用户身份（本机管理员不在该隔离边界内）；没有飞牛登录的公网请求不能靠伪造身份 Header 进入管理功能。独立业务监听器无管理路由，不信任飞牛身份 Header，仅开放逐服务授权的转发。
+- 请求头上限 32 KiB，管理 JSON 上限 128 KiB，最多 50 个服务、每个入口最多 128 个连接；业务上传流式转发，文件大小由后端自行限制。连通检查 5 秒超时且不跟随重定向。目标必须是策略列出的当前 NAS 本机接口 IP，不接受任意 DNS 或外部公网目标。
 - 日志不记录请求 URL、Cookie、Authorization、请求体或服务配置内容。
-- 公开端口和绕过登录不在本版本范围内。源代码不读取 DSH 配置、凭据、会话或安装目录。
+- AIO 不直接提供公网 HTTPS，不绕过飞牛管理登录；外部业务由 Lucky 等反代接入可选回环端口。源代码不读取 DSH 配置、凭据、会话或安装目录。
 
 ## 启停和回滚
 

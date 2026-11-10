@@ -34,6 +34,13 @@ function render(){
       await save(state.services.filter(item=>item.id!==service.id));if(editing===service.id)cancel();message('服务配置已删除。');
     })}));
     const card=element('article',{className:'card'},[heading,...(service.note?[element('p',{className:'service-note',text:service.note})]:[]),element('p',{text:'目标：'+target}),element('p',{className:'address',text:'入口：'+entry(service)}),actions]);
+    if(service.publicAccess){
+      if(state.policy.publicOrigin&&service.enabled){
+        const url=state.policy.publicOrigin+'/'+encodeURIComponent(service.id)+'/';
+        card.append(element('p',{className:'address',text:'外部入口：'+url}));
+        actions.append(element('a',{className:'open',href:url,target:'_blank',rel:'noopener noreferrer',text:'打开外部入口'}));
+      }else card.append(element('p',{className:'result',text:service.enabled?'外部访问已授权，但管理员尚未配置业务入口策略。':'外部访问已授权，服务停用期间不可访问。'}));
+    }
     const result=checks.get(service.id);if(result)card.append(element('p',{className:'result','data-ok':String(result.reachable),role:'status',text:result.message}));container.append(card);
   }updateBusy();
 }
@@ -43,17 +50,22 @@ async function load(){
   state=next;ready=true;checks.clear();$('host').replaceChildren(...state.policy.targetHosts.map(host=>element('option',{value:host,text:host})));
   if(state.policy.targetHosts.includes(selectedHost))$('host').value=selectedHost;render();
 }
-async function save(services){const next=await api('services','PUT',{revision:state.revision,services});state={...state,...next};checks.clear();render();}
+async function save(services){
+  const opening=services.some(item=>item.publicAccess&&item.enabled&&!state.services.some(previous=>previous.id===item.id&&previous.publicAccess&&previous.enabled));
+  if(opening&&!confirm('允许外部访问后，这些服务不再受飞牛登录保护。请确认业务自身有鉴权，并信任其同域网页。确定开放？'))throw new Error('已取消外部开放，配置未保存。');
+  const next=await api('services','PUT',{revision:state.revision,services});state={...state,...next};checks.clear();render();
+}
 function edit(service){
   editing=service?.id??null;$('editor-title').textContent=service?'编辑服务':'添加服务';
   $('name').value=service?.name??'';$('id').value=service?.id??'';$('id').disabled=!!service;
   $('host').value=service?.host??state.policy.targetHosts[0];$('port').value=service?.port??8080;$('base-path').value=service?.basePath??'/';$('upstream-authority').value=service?.upstreamAuthority??'';$('enabled').checked=service?.enabled??true;
-  $('note').value=service?.note??'';
+  $('note').value=service?.note??'';$('public-access').checked=service?.publicAccess??false;
+  $('public-hint').textContent=state.policy.publicOrigin?'外部入口：'+state.policy.publicOrigin+'/服务标识/。请确认业务自身有登录鉴权，不受飞牛登录保护。':'管理员尚未配置业务入口策略；授权后也不会立即对外开放。';
   $('editor').hidden=false;$('editor').scrollIntoView({block:'start'});$('name').focus();
 }
 function cancel(){editing=null;$('editor').hidden=true;$('id').disabled=false;$('service-form').reset();}
 $('service-form').addEventListener('submit',event=>{event.preventDefault();run(async()=>{
-  const service={id:$('id').value.trim(),name:$('name').value.trim(),host:$('host').value,port:Number($('port').value),basePath:$('base-path').value.trim(),upstreamAuthority:$('upstream-authority').value.trim(),enabled:$('enabled').checked,note:$('note').value};
+  const service={id:$('id').value.trim(),name:$('name').value.trim(),host:$('host').value,port:Number($('port').value),basePath:$('base-path').value.trim(),upstreamAuthority:$('upstream-authority').value.trim(),enabled:$('enabled').checked,publicAccess:$('public-access').checked,note:$('note').value};
   if(!editing&&state.services.some(item=>item.id===service.id))throw new Error('服务标识已存在，请换一个标识。');
   if(editing&&!state.services.some(item=>item.id===editing))throw new Error('该服务已被删除，请取消编辑后重新添加。');
   await save(editing?state.services.map(item=>item.id===editing?service:item):[...state.services,service]);cancel();message('服务已保存。可先检查连接，再打开入口。');

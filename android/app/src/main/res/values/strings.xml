@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name" translatable="false">dsh</string>
+    <string name="owner_required">访问被拒绝，请确认登录的是 AIO 指定所有者管理员</string>
+    <string name="download_summary">进行中 %1$d · 已完成 %2$d · 最近 %3$d 条</string>
+</resources>

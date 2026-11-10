@@ -1,0 +1,23 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+const base=new URL('../android/app/src/main/',import.meta.url);
+test('Android 桌面名称 dsh 与鲸鱼自适应/主题图标，包名不变以支持覆盖升级',async()=>{
+  const manifest=await readFile(new URL('AndroidManifest.xml',base),'utf8');
+  const strings=await readFile(new URL('res/values/strings.xml',base),'utf8');
+  const whale=await readFile(new URL('res/drawable/ic_deepseek.xml',base),'utf8');
+  const adaptive=await readFile(new URL('res/mipmap-anydpi-v26/ic_launcher.xml',base),'utf8');
+  const themed=await readFile(new URL('res/mipmap-anydpi-v33/ic_launcher.xml',base),'utf8');
+  const build=await readFile(new URL('../../build.gradle',base),'utf8');
+  assert.match(manifest,/android:label="@string\/app_name"/);
+  assert.match(strings,/<string name="app_name" translatable="false">dsh<\/string>/);
+  assert.match(manifest,/android:icon="@mipmap\/ic_launcher"/);
+  assert.match(manifest,/android:roundIcon="@mipmap\/ic_launcher"/);
+  assert.match(whale,/android:fillColor="#5786FE"/);
+  assert.match(whale,/M23\.748,4\.651/);
+  assert.match(adaptive,/<adaptive-icon/);
+  assert.match(adaptive,/@drawable\/ic_deepseek/);
+  assert.match(themed,/<monochrome android:drawable="@drawable\/ic_deepseek"/);
+  assert.match(build,/applicationId 'top\.fnaio\.direct'/);
+  assert.ok(Number(build.match(/versionCode (\d+)/)?.[1])>=5);
+});

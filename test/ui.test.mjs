@@ -31,6 +31,16 @@ test('备注使用可选多行输入、纯文本卡片展示并保留编辑值',
   assert.match(css,/\.service-note\{white-space:pre-wrap;overflow-wrap:anywhere/);
 });
 
+test('外部访问默认关闭、单独授权，链接使用业务入口并在保存及导入时确认',()=>{
+  assert.match(html,/<input id="public-access"[^>]*type="checkbox">/);
+  assert.match(html,/不经过飞牛登录/);
+  assert.match(js,/\$\('public-access'\)\.checked=service\?\.publicAccess\?\?false/);
+  assert.match(js,/publicAccess:\$\('public-access'\)\.checked/);
+  assert.match(js,/confirm\('允许外部访问后/);
+  assert.match(js,/state\.policy\.publicOrigin/);
+  assert.match(js,/await save\(value\.services\)/);
+});
+
 test('手机和暗色采用局部样式，刷新/操作目标至少 44px，长地址可换行',()=>{
   assert.match(css,/min-height:44px/);assert.match(css,/font-size:16px/);
   assert.match(css,/safe-area-inset-bottom/);assert.match(css,/prefers-color-scheme:dark/);

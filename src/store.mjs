@@ -20,7 +20,18 @@ export function validatePolicy(input){
   if(!origins.has(input.defaultOrigin))throw fail('默认入口不在允许列表中');
   const localAddresses=new Set(['127.0.0.1','::1',...Object.values(networkInterfaces()).flat().filter(Boolean).map(item=>item.address)]);
   if(!Array.isArray(input.targetHosts)||!input.targetHosts.length||input.targetHosts.some(host=>typeof host!=='string'||!isIP(host)||!localAddresses.has(host)||['0.0.0.0','::'].includes(host)))throw fail('目标必须是当前 NAS 接口上的明确本机 IP 地址');
-  return {...input,origins,targetHosts:new Set(input.targetHosts)};
+  let publicProxy=null;
+  if(input.publicProxy!==undefined){
+    const value=input.publicProxy;
+    if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['listenHost','port','origin'].includes(key)))throw fail('业务入口策略字段无效');
+    if(!['127.0.0.1','::1'].includes(value.listenHost))throw fail('业务入口只允许监听回环地址');
+    if(!Number.isInteger(value.port)||value.port<1024||value.port>65535||[5666,5667].includes(value.port))throw fail('业务入口端口无效');
+    let url;try{url=new URL(value.origin);}catch{throw fail('业务外部入口必须为规范 HTTPS Origin');}
+    if(url.protocol!=='https:'||url.origin!==value.origin||url.username||url.password||/[\s*]/.test(value.origin)||origins.has(value.origin))throw fail('业务外部入口必须为独立的规范 HTTPS Origin');
+    if(Number(url.port||443)===value.port)throw fail('业务内部端口不能与外部端口相同');
+    publicProxy={listenHost:value.listenHost,port:value.port,origin:url.origin};
+  }
+  return {...input,publicProxy,origins,targetHosts:new Set(input.targetHosts)};
 }
 export function normalizeBasePath(value){
   if(typeof value!=='string'||!value.startsWith('/')||value.startsWith('//')||/[?#\\\s]/.test(value)||/%(?:2f|5c|00)/i.test(value))throw fail('基础路径必须以 / 开头且不含查询或编码分隔符');
@@ -32,19 +43,22 @@ export function validateServices(items,policy){
   if(!Array.isArray(items)||items.length>50)throw fail('最多配置 50 个服务');
   const ids=new Set();
   return items.map(item=>{
-    if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','name','host','port','basePath','upstreamAuthority','enabled','note'].includes(key)))throw fail('服务字段无效');
+    if(!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).some(key=>!['id','name','host','port','basePath','upstreamAuthority','enabled','note','publicAccess'].includes(key)))throw fail('服务字段无效');
     if(typeof item.id!=='string'||!/^[a-z][a-z0-9-]{0,31}$/.test(item.id)||ids.has(item.id))throw fail('服务标识须为小写字母开头的字母、数字或短横线，且不能重复');ids.add(item.id);
     if(typeof item.name!=='string'||!item.name.trim()||item.name.length>60||/[\x00-\x1f\x7f]/.test(item.name))throw fail('服务名称须为 1～60 字符');
     if(!policy.targetHosts.has(item.host))throw fail('目标地址不在本机允许列表中');
     if(!Number.isInteger(item.port)||item.port<1024||item.port>65535||[5666,5667].includes(item.port))throw fail('端口须为 1024～65535，且不能回指飞牛网关');
+    if(policy.publicProxy&&[policy.publicProxy.port,Number(new URL(policy.publicProxy.origin).port||443)].includes(item.port))throw fail('目标端口不能回指 AIO 业务入口或外部代理入口');
     if(typeof item.enabled!=='boolean')throw fail('启用状态必须为布尔值');
+    const publicAccess=item.publicAccess??false;
+    if(item.publicAccess!==undefined&&typeof item.publicAccess!=='boolean')throw fail('外部访问状态必须为布尔值');
     const basePath=normalizeBasePath(item.basePath??'/');
     const upstreamAuthority=item.upstreamAuthority??'';
     if(upstreamAuthority!==''&&(typeof upstreamAuthority!=='string'||upstreamAuthority.length>253))throw fail('回源 Host 无效');
     if(upstreamAuthority)authority(upstreamAuthority);
     const note=item.note===undefined?'':item.note;
     if(typeof note!=='string'||note.length>500||/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(note))throw fail('备注须为最多 500 字符的文本');
-    return {id:item.id,name:item.name.trim(),host:item.host,port:item.port,basePath,upstreamAuthority,enabled:item.enabled,note:note.replace(/\r\n?/g,'\n')};
+    return {id:item.id,name:item.name.trim(),host:item.host,port:item.port,basePath,upstreamAuthority,enabled:item.enabled,publicAccess,note:note.replace(/\r\n?/g,'\n')};
   });
 }
 

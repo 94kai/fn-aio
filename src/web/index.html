@@ -8,7 +8,7 @@
 </head>
 <body><main>
 <header><div class="brand"><span class="logo" aria-hidden="true">AIO</span><div><h1>服务入口</h1><p>统一连接你的 NAS 自建服务</p></div></div><button id="reload" type="button">刷新</button></header>
-<div class="notice"><strong>仅飞牛登录后可访问</strong><span>只转发请求，不安装或启动后端服务。请仅接入你信任的服务，同域网页不具备相互隔离。</span></div>
+<div class="notice"><strong>管理入口仅飞牛登录后可访问</strong><span>外部访问需逐服务开启，使用业务自己的登录，不受飞牛登录保护。只接入你信任的服务，同域网页不具备相互隔离。</span></div>
 <div id="message" class="message" role="status" hidden></div>
 <section class="section"><div class="section-heading"><h2>我的服务 <span id="count"></span></h2><div class="actions"><button id="export" type="button">导出配置</button><button id="import" type="button">导入</button><button id="add" class="primary" type="button">添加服务</button></div></div><p id="loading" class="empty" role="status">正在读取服务配置…</p><div id="services" class="cards"></div></section>
 <section id="editor" class="editor" hidden><div class="section-heading"><h2 id="editor-title">添加服务</h2><button id="cancel" type="button">取消</button></div>
@@ -21,7 +21,9 @@
 <label class="wide">回源 Host（可选）<input id="upstream-authority" name="upstreamAuthority" placeholder="留空使用目标地址及端口" spellcheck="false" autocapitalize="none"><small>仅用于明确要求特定 Host 的后端；不会替代服务自己的登录。</small></label>
 <label class="wide">备注（可选）<textarea id="note" name="note" rows="3" maxlength="500" placeholder="说明服务用途、使用注意事项等" aria-describedby="note-hint"></textarea><small id="note-hint">最多 500 字符，支持换行；会随配置导出，请勿填写密码或令牌。</small></label>
 <label class="check wide"><input id="enabled" name="enabled" type="checkbox" checked>启用此服务</label>
-</div><p class="hint">访问地址自动生成为 /app/aio/s/服务标识/。网页需支持子路径或相对资源地址，AIO 不替换 HTML/JavaScript 内容。</p><div class="form-actions"><button class="primary" type="submit">保存配置</button></div></fieldset></form></section>
-<footer>AIO 独立运行 · 无公开端口 · 原业务服务保持原样</footer>
+<label class="check wide"><input id="public-access" name="publicAccess" type="checkbox">允许通过 Lucky 外部入口访问（不经过飞牛登录）</label>
+<p id="public-hint" class="hint wide">默认关闭。开启前确认服务自身有登录鉴权；外部入口需管理员配置。</p>
+</div><p class="hint">私有地址为 /app/aio/s/服务标识/；外部地址为独立端口的 /服务标识/。网页需支持子路径或相对资源地址，AIO 不替换 HTML/JavaScript 内容。</p><div class="form-actions"><button class="primary" type="submit">保存配置</button></div></fieldset></form></section>
+<footer>AIO 独立运行 · 管理与外部业务入口分离 · 原业务服务保持原样</footer>
 <input id="import-file" type="file" accept="application/json,.json" hidden>
 </main></body></html>

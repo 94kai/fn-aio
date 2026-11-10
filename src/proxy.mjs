@@ -15,7 +15,8 @@ export function parseTarget(raw){
   if(decoded.split('/').some(part=>part==='.'||part==='..')||/[\x00-\x1f\x7f]/.test(decoded))throw fail('请求路径无效');
   return {pathname,search};
 }
-export function mount(service){return `${ROOT}/s/${service.id}`;}
+export function mount(service,context){return context?.publicAccess?`/${service.id}`:`${ROOT}/s/${service.id}`;}
+function cookiePrefix(service,context){return `aio_${context?.publicAccess?'public_':''}${service.id}__`;}
 export function destination(service,suffix,search=''){
   return (service.basePath==='/'?'':service.basePath)+(suffix||'/')+search;
 }
@@ -25,33 +26,35 @@ export function outboundHeaders(req,service,context,upgrade=false){
   for(const key of Object.keys(headers))if(key.startsWith('x-trim-')||key.startsWith('x-forwarded-')||key.startsWith('x-aio-')||['forwarded','referer'].includes(key))delete headers[key];
   headers.host=targetAuthority(service);
   if(headers.origin!==undefined)headers.origin=`http://${headers.host}`;
-  const prefix=`aio_${service.id}__`;
+  const prefix=cookiePrefix(service,context);
   if(headers.cookie){
     const cookies=String(headers.cookie).split(';').map(value=>value.trim()).filter(value=>value.startsWith(prefix)&&value.indexOf('=')>prefix.length).map(value=>value.slice(prefix.length));
     if(cookies.length)headers.cookie=cookies.join('; ');else delete headers.cookie;
   }
   headers['x-forwarded-host']=new URL(context.origin).host;
   headers['x-forwarded-proto']=new URL(context.origin).protocol.slice(0,-1);
-  headers['x-forwarded-prefix']=mount(service);
+  headers['x-forwarded-prefix']=mount(service,context);
   if(upgrade){headers.connection='Upgrade';headers.upgrade='websocket';}
   return headers;
 }
-function mountedPath(service,path){
-  const base=service.basePath==='/'?'':service.basePath;
-  const suffix=base&&(path===base||path.startsWith(base+'/'))?path.slice(base.length):path;
-  return mount(service)+(suffix.startsWith('/')?suffix:'/'+suffix);
+function mountedPath(service,path,context){
+  const base=service.basePath==='/'?'':service.basePath,prefix=mount(service,context);
+  const hasBase=base&&(path===base||path.startsWith(base+'/'));
+  if(!hasBase&&(path===prefix||path.startsWith(prefix+'/')))return path;
+  const suffix=hasBase?path.slice(base.length):path;
+  return prefix+(suffix.startsWith('/')?suffix:'/'+suffix);
 }
 export function rewriteCookie(cookie,service,context){
   const parts=String(cookie).split(';').map(value=>value.trim()),first=parts.shift(),index=first.indexOf('=');
   if(index<1||! /^[!#$%&'*+.^_`|~0-9a-z-]+$/i.test(first.slice(0,index)))return null;
-  const out=[`aio_${service.id}__${first}`];let hasPath=false,hasSecure=false;
+  const out=[`${cookiePrefix(service,context)}${first}`];let hasPath=false,hasSecure=false;
   for(const attr of parts){
     const key=attr.split('=')[0].toLowerCase();
     if(key==='domain')continue;
-    if(key==='path'){out.push('Path='+mountedPath(service,attr.slice(attr.indexOf('=')+1)||'/'));hasPath=true;}
+    if(key==='path'){out.push('Path='+mountedPath(service,attr.slice(attr.indexOf('=')+1)||'/',context));hasPath=true;}
     else {out.push(attr);if(key==='secure')hasSecure=true;}
   }
-  if(!hasPath)out.push('Path='+mount(service)+'/');
+  if(!hasPath)out.push('Path='+mount(service,context)+'/');
   if(context.origin.startsWith('https:')&&!hasSecure)out.push('Secure');
   return out.join('; ');
 }
@@ -63,7 +66,7 @@ export function inboundHeaders(headers,service,context,upstreamPath){
       const actual=`http://${service.host.includes(':')?'['+service.host+']':service.host}:${service.port}`;
       const current=new URL(upstreamPath,actual),location=new URL(out.location,current);
       const accepted=new Set([new URL(actual).host,new URL(`http://${targetAuthority(service)}`).host]);
-      if(['http:','https:'].includes(location.protocol)&&accepted.has(location.host))out.location=mountedPath(service,location.pathname)+location.search+location.hash;
+      if(['http:','https:'].includes(location.protocol)&&accepted.has(location.host))out.location=mountedPath(service,location.pathname,context)+location.search+location.hash;
     }catch{delete out.location;}
   }
   return out;

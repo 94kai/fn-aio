@@ -1,6 +1,6 @@
 {
   "name": "fn-aio",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "独立的飞牛私有应用网关：管理并转发 NAS 自建 HTTP 服务",

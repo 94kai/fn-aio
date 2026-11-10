@@ -4,13 +4,21 @@
 
 | 配置 | 用途 | 修改方式 |
 | --- | --- | --- |
-| 网关策略 `gateway.json` | 谁可访问、允许哪些入口、允许回源到哪些本机 IP | NAS 管理员修改；重启 AIO 生效 |
-| 服务列表 `services.json` | 服务标识、名称、端口、基础路径、回源 Host、启停 | AIO 管理页编辑/导入导出；无需重启 |
+| 网关策略 `gateway.json` | 谁可管理、允许哪些私有入口、本机回源白名单、可选回环业务监听 | NAS 管理员修改；重启 AIO 生效 |
+| 服务列表 `services.json` | 服务标识、名称、端口、基础路径、回源 Host、启停、备注、逐服务外部授权 | AIO 管理页编辑/导入导出；无需重启 |
 
 生产策略：`/var/apps/aio/target/gateway.json`。
 生产服务列表：`/var/apps/aio/var/services.json`（前一版本为 `services.json.previous`）。不要在运行时手工改服务列表，不要把两种配置互相导入。
 
 开发构建策略：项目根目录 `.local/gateway.json`，从[示例](<../gateway.example.json>)复制。**只改生产策略不会更新旧 FPK 或本机构建策略**；重新构建、升级前务必同步，否则可能覆盖白名单。上述私人配置、备份和 FPK 均不得提交 Git。
+
+## 可选外部业务入口（0.2.0）
+
+新增可选部署策略 `publicProxy:{listenHost,port,origin}`：业务监听仅允许回环 IP，固定 HTTPS 外部 Origin；没有该字段时保持原来的纯私有模式。不要把业务入口的 Origin 加入飞牛 `allowedOrigins`，也不要把 Lucky 请求转回飞牛端口。AIO 管理路由始终只存在于私有 Socket 入口。
+
+服务新增可选布尔 `publicAccess`，缺省 false；正常保存及导出时写入。外部按 `/服务标识/` 路由，私有地址保持不变；旧备份没有该字段时导入将关闭外部访问。旧版不接受此字段，降级前先备份并移除；需要降至备注功能之前的版本时还需移除 `note`。部署策略降级也需移除 `publicProxy`。
+
+具体策略片段、Lucky 的 Host 和路径保留、容器回环网络限制、Cookie/子路径兼容及 Vaultwarden 配置见[业务入口手册](<public-proxy.md>)。公网证书、Lucky、真实客户端验收由用户负责，不自动安装或调整网络。
 
 ## 服务备注
 
@@ -24,6 +32,7 @@
 - `allowedOrigins`：允许用户访问的入口，格式为完整 `协议://主机[:端口]`。不能含路径、末尾 `/`、查询、账号密码，也不支持 `*`。
 - `defaultOrigin`：必须是 `allowedOrigins` 中的一项；用于私有网关把 Host 改为 localhost 且请求没有可用来源信息时的入口恢复，不是跳转地址。
 - `targetHosts`：允许服务回源的 IP，必须属于当前 NAS 本机接口（可含 `127.0.0.1`、`::1`）。不能填域名、外网 IP 或 `0.0.0.0`。NAS 换 IP 后，需同步策略和涉及旧 IP 的服务配置。
+- `publicProxy`：可选的独立业务入口策略。只能监听回环地址，不承载管理路由；完整规则见[业务入口手册](<public-proxy.md>)。
 
 **协议、主机、端口共同构成 Origin。** 例如以下三个地址必须分别添加：
 

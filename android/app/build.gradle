@@ -1,0 +1,26 @@
+plugins { id 'com.android.application' }
+buildDir = file('../../.local/android-build/app')
+def nasOrigin = providers.gradleProperty('nasOrigin').getOrElse('')
+if (nasOrigin && !(nasOrigin ==~ /https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?/)) {
+    throw new GradleException('nasOrigin 必须是无路径、无凭据的 HTTPS Origin')
+}
+def directUrl = providers.gradleProperty('directUrl').getOrElse('')
+if (directUrl && !(directUrl ==~ /https:\/\/[A-Za-z0-9.-]+(:[0-9]{1,5})?(\/[A-Za-z0-9._~\/-]*)?/)) {
+    throw new GradleException('directUrl 必须是无凭据、无查询参数的 HTTPS 地址')
+}
+android {
+    namespace 'top.fnaio.direct'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'top.fnaio.direct'
+        minSdk 26
+        targetSdk 35
+        versionCode 5
+        versionName '0.3.1'
+        buildConfigField 'String', 'NAS_ORIGIN', '"' + nasOrigin + '"'
+        buildConfigField 'String', 'DIRECT_URL', '"' + directUrl + '"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+    buildTypes { release { minifyEnabled false } }
+}

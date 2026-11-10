@@ -31,6 +31,18 @@ export function contextFor(req,policy,target){
   if(req.headers['sec-fetch-site']==='cross-site'&&!landing)throw fail('拒绝跨站访问',403);
   return {origin};
 }
+export function publicContextFor(req,policy,target){
+  const config=policy.publicProxy;
+  if(!config)throw fail('入口不存在',404);
+  // Only loopback peers may reach this listener. Forwarded identity is never trusted.
+  if(!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(req.socket.remoteAddress))throw fail('业务入口仅允许本机代理访问',403);
+  let host;try{host=authority(req.headers.host).host;}catch{throw fail('入口 Host 无效',400);}
+  if(host!==new URL(config.origin).host)throw fail('业务入口 Host 不匹配',403);
+  if(req.headers.origin!==undefined&&req.headers.origin!==config.origin)throw fail('拒绝跨源业务请求',403);
+  const landing=req.method==='GET'&&!req.headers.upgrade&&/^\/[a-z][a-z0-9-]{0,31}\/?$/.test(target.pathname)&&!target.search&&req.headers['sec-fetch-mode']==='navigate'&&req.headers['sec-fetch-dest']==='document';
+  if(req.headers['sec-fetch-site']==='cross-site'&&!landing)throw fail('拒绝跨站业务请求',403);
+  return {origin:config.origin,publicAccess:true};
+}
 function apiAdmission(req,policy){
   if(req.headers['x-aio-request']!=='1')throw fail('缺少同源管理请求标记',403);
   if(req.method!=='GET'&&req.method!=='HEAD'){
@@ -63,11 +75,11 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
     if(target.pathname===ROOT){res.writeHead(308,{location:ROOT+'/','cache-control':'no-store'});res.end();return;}
     if(target.pathname===ROOT+'/api/health'){
       if(!['GET','HEAD'].includes(req.method))throw fail('方法不支持',405);
-      json(res,{name:'AIO',version:'0.1.1',privateOnly:true});return;
+      json(res,{name:'AIO',version:'0.2.0',privateOnly:!policy.publicProxy});return;
     }
     if(target.pathname===ROOT+'/api/services'){
       apiAdmission(req,policy);
-      if(req.method==='GET'){json(res,{...store.get(),policy:{targetHosts:[...policy.targetHosts]}});return;}
+      if(req.method==='GET'){json(res,{...store.get(),policy:{targetHosts:[...policy.targetHosts],publicOrigin:policy.publicProxy?.origin??null}});return;}
       if(req.method==='PUT'){json(res,await store.save(await jsonBody(req)));return;}
       throw fail('方法不支持',405);
     }
@@ -105,20 +117,60 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
       proxy.upgrade(req,socket,head,service,context,destination(service,route[2],target.search));
     }catch(error){socket.end(`HTTP/1.1 ${error.status||400} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);}
   });
-  server.closeApp=async()=>{proxy.close();for(const socket of sockets)socket.destroy();if(server.listening)await new Promise((yes,no)=>server.close(error=>error?no(error):yes()));};
+  // This server has no management route or asset map, even with forged NAS headers.
+  let business;
+  if(policy.publicProxy){
+    function route(req){
+      const target=parseTarget(req.url),context=publicContextFor(req,policy,target);
+      const match=/^\/([a-z][a-z0-9-]{0,31})(\/.*)?$/.exec(target.pathname);
+      const service=match&&store.get().services.find(item=>item.id===match[1]&&item.enabled&&item.publicAccess);
+      if(!service)throw fail('入口不存在',404);
+      return {target,context,service,suffix:match[2]};
+    }
+    business=http.createServer({maxHeaderSize:32768,headersTimeout:15000,requestTimeout:300000},(req,res)=>{
+      try{
+        const {target,context,service,suffix}=route(req);
+        if(['CONNECT','TRACE'].includes(req.method))throw fail('方法不支持',405);
+        if(!suffix){res.writeHead(308,{location:mount(service,context)+'/'+target.search,'cache-control':'no-store'});res.end();return;}
+        proxy.forward(req,res,service,context,destination(service,suffix,target.search));
+      }catch(error){reject(res,error);}
+    });
+    business.maxConnections=128;
+    business.on('connection',socket=>{sockets.add(socket);socket.on('error',()=>{});socket.once('close',()=>sockets.delete(socket));});
+    business.on('connect',(_req,socket)=>socket.end('HTTP/1.1 405 Rejected\r\nConnection: close\r\n\r\n'));
+    business.on('upgrade',(req,socket,head)=>{
+      try{
+        const {target,context,service,suffix}=route(req);
+        if(req.method!=='GET'||String(req.headers.upgrade).toLowerCase()!=='websocket'||!suffix)throw fail('升级入口无效',404);
+        proxy.upgrade(req,socket,head,service,context,destination(service,suffix,target.search));
+      }catch(error){socket.end(`HTTP/1.1 ${error.status||400} Rejected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);}
+    });
+  }
+  server.businessServer=business;
+  server.startBusiness=async()=>{
+    if(business)await new Promise((yes,no)=>{business.once('error',no);business.listen(policy.publicProxy.port,policy.publicProxy.listenHost,()=>{business.removeListener('error',no);yes();});});
+  };
+  server.closeApp=async()=>{
+    proxy.close();for(const socket of sockets)socket.destroy();
+    await Promise.all([server,business].filter(item=>item?.listening).map(item=>new Promise((yes,no)=>item.close(error=>error?no(error):yes()))));
+  };
   return server;
 }
 export async function startApp(options,socketPath){
   const path=resolve(socketPath);try{await lstat(path);throw fail('Socket 已存在，请先检查旧进程',409);}catch(error){if(error.code!=='ENOENT')throw error;}
   const server=await createApp(options);
-  await new Promise((yes,no)=>{server.once('error',no);server.listen(path,yes);});await chmod(path,0o600);return server;
+  try{
+    // Bind business first: the lifecycle's Socket readiness means both entries are ready.
+    await server.startBusiness();
+    await new Promise((yes,no)=>{server.once('error',no);server.listen(path,yes);});await chmod(path,0o600);return server;
+  }catch(error){await server.closeApp();throw error;}
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   try{
     const policy=JSON.parse(await readFile(process.argv[2],'utf8'));
     if(!process.env.TRIM_PKGVAR)throw fail('必须由飞牛应用生命周期指定私有数据目录');
     const server=await startApp({policy,dataFile:join(resolve(process.env.TRIM_PKGVAR),'services.json')},process.argv[3]);
-    console.log('AIO 私有网关已启动，仅监听 Unix Socket');
+    console.log('AIO 已启动：管理入口为私有 Unix Socket，业务入口按本机策略启用');
     for(const name of ['SIGTERM','SIGINT'])process.once(name,()=>server.closeApp().then(()=>process.exit(0)));
   }catch(error){console.error(error.status?error.message:'AIO 启动失败，请检查网关策略、数据目录与 Socket 权限');process.exitCode=1;}
 }
