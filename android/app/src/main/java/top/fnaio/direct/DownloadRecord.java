@@ -42,6 +42,8 @@ public final class DownloadRecord {
         long bytes = state == State.SAVING ? copied : downloaded;
         return (int) Math.min(1000, Math.max(0, bytes * 1000 / total));
     }
+    public static final String APK_MIME = "application/vnd.android.package-archive";
+    public boolean isApk() { return name.toLowerCase(Locale.ROOT).endsWith(".apk") || APK_MIME.equalsIgnoreCase(mime); }
     public boolean canOpen() { return state == State.COMPLETED && validDestination(destination); }
     public static boolean validDestination(String value) {
         try { URI uri = new URI(value); return "content".equals(uri.getScheme()) && uri.getRawAuthority() != null

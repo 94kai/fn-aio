@@ -7,8 +7,10 @@ const read=name=>readFile(new URL(name,dir),'utf8');
 test('悬浮球缩小为 34dp 视觉，保留 44dp 触控、半透明与三项菜单',async()=>{
   const [ball,main]=await Promise.all([read('FloatingBall.java'),read('MainActivity.java')]);
   assert.match(ball,/radius = dp\(17\)/);
-  assert.match(ball,/setAlpha\(0\.72f\)/);
-  assert.match(ball,/expanded \|\| interacting \? 1f : 0\.72f/);
+  assert.match(ball,/setAlpha\(0\.86f\)/);
+  assert.match(ball,/expanded \|\| interacting \? 1f : 0\.86f/);
+  assert.match(ball,/direct \? Color\.argb\(245, 22, 160, 133\) : Color\.argb\(245, 83, 109, 254\)/);
+  assert.match(ball,/direct \? Color\.argb\(235, 17, 128, 107\) : Color\.argb\(235, 63, 81, 211\)/);
   assert.match(ball,/performClick\(\)/);
   assert.match(main,/BALL_DP = 44/);
   assert.match(main,/MENU_HEIGHT_DP = 156/);
@@ -17,6 +19,28 @@ test('悬浮球缩小为 34dp 视觉，保留 44dp 触控、半透明与三项�
   assert.match(main,/downloads\.dismissManager\(\)/);
   assert.match(main,/ball\.setInteracting\(true\)/);
   assert.match(main,/MENU_HEIGHT_DP \+ 6/);
+});
+test('APK 仅用户点击后安装，授权返回重验记录，提供文件浏览回退',async()=>{
+  const [installer,native,ui,manifest]=await Promise.all([read('ApkInstaller.java'),read('WebDownloads.java'),read('DownloadManagerDialog.java'),readFile(new URL('../android/app/src/main/AndroidManifest.xml',import.meta.url),'utf8')]);
+  assert.match(manifest,/android\.permission\.REQUEST_INSTALL_PACKAGES/);
+  assert.match(installer,/canRequestPackageInstalls\(\)/);
+  assert.match(installer,/Settings\.ACTION_MANAGE_UNKNOWN_APP_SOURCES/);
+  assert.match(installer,/request != INSTALL_SETTINGS/);
+  assert.match(installer,/remove\("pendingRecord"\)/);
+  assert.match(installer,/retry\.accept\(recordId\)/);
+  assert.match(installer,/Intent\.ACTION_VIEW\)\.setDataAndType\(uri, DownloadRecord\.APK_MIME\)/);
+  assert.match(installer,/Intent\.FLAG_GRANT_READ_URI_PERMISSION/);
+  assert.match(installer,/ClipData\.newRawUri/);
+  assert.match(installer,/Intent\.ACTION_OPEN_DOCUMENT/);
+  assert.match(installer,/DocumentsContract\.EXTRA_INITIAL_URI/);
+  assert.match(installer,/ActivityNotFoundException \| SecurityException/);
+  assert.doesNotMatch(installer,/PackageInstaller|FLAG_GRANT_WRITE_URI_PERMISSION|ACTION_INSTALL_PACKAGE|file:\/\//);
+  assert.match(native,/installer\.activityResult\(request\)/);
+  assert.match(native,/record == null \|\| !record\.canOpen\(\) \|\| destroyed/);
+  assert.match(native,/if \(!share && apk\) \{ installer\.install\(recordId, uri\); return; \}/);
+  assert.match(native,/record\.isApk\(\) \|\| DownloadRecord\.APK_MIME\.equalsIgnoreCase\(resolved\)/);
+  assert.match(ui,/record\.isApk\(\) \? "安装" : "打开"/);
+  assert.match(ui,/在系统文件浏览器中查看/);
 });
 test('下载历史仅存文件元数据，限制数量，恢复中断状态，不删除实际文件',async()=>{
   const history=await read('DownloadHistory.java');

@@ -39,6 +39,13 @@ public final class DownloadRecordTest {
         DownloadRecord huge = new DownloadRecord("huge", "a", "", Long.MAX_VALUE, 0);
         huge.progress(DownloadRecord.State.DOWNLOADING, Long.MAX_VALUE, Long.MAX_VALUE, 0, 1);
         check(huge.total == DownloadPolicy.MAX_BYTES); check(huge.progressPermille() == 1000);
+        check(!record.isApk());
+        check(new DownloadRecord("apk", "dsh.APK", "application/octet-stream", 1, 0).isApk());
+        check(new DownloadRecord("apk", "download", DownloadRecord.APK_MIME, 1, 0).isApk());
+        check(new DownloadRecord("apk", "download", "APPLICATION/VND.ANDROID.PACKAGE-ARCHIVE", 1, 0).isApk());
+        check(!new DownloadRecord("not-apk", "file.apk.zip", "application/zip", 1, 0).isApk());
+        check(!new DownloadRecord("not-apk", "file.apks", "application/octet-stream", 1, 0).isApk());
+        check(!new DownloadRecord("not-apk", "file.xapk", "application/octet-stream", 1, 0).isApk());
         System.out.println("DownloadRecord: " + count + " tests passed");
     }
 }

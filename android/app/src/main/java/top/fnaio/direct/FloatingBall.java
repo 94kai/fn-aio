@@ -17,7 +17,7 @@ public final class FloatingBall extends View {
         super(context);
         setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         setFocusable(true);
-        setAlpha(0.72f);
+        setAlpha(0.86f);
     }
     private float dp(float value) { return value * getResources().getDisplayMetrics().density; }
     public void setDirect(boolean value) { direct = value; updateGradient(); invalidate(); }
@@ -26,13 +26,13 @@ public final class FloatingBall extends View {
     }
     private void updateGradient() {
         float x = getWidth() / 2f, y = getHeight() / 2f, radius = dp(17);
-        int top = direct ? Color.argb(205, 65, 145, 139) : Color.argb(205, 104, 125, 166);
-        int bottom = direct ? Color.argb(185, 30, 103, 104) : Color.argb(185, 52, 70, 106);
+        int top = direct ? Color.argb(245, 22, 160, 133) : Color.argb(245, 83, 109, 254);
+        int bottom = direct ? Color.argb(235, 17, 128, 107) : Color.argb(235, 63, 81, 211);
         gradient = new LinearGradient(x, y - radius, x, y + radius, top, bottom, Shader.TileMode.CLAMP);
     }
     public void setExpanded(boolean value) { expanded = value; updateOpacity(); invalidate(); }
     public void setInteracting(boolean value) { interacting = value; updateOpacity(); }
-    private void updateOpacity() { animate().alpha(expanded || interacting ? 1f : 0.72f).setDuration(120).start(); }
+    private void updateOpacity() { animate().alpha(expanded || interacting ? 1f : 0.86f).setDuration(120).start(); }
     @Override protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         float x = getWidth() / 2f, y = getHeight() / 2f, radius = dp(17);

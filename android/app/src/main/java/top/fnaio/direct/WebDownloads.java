@@ -43,6 +43,7 @@ public final class WebDownloads {
     private final ExecutorService fileActions = Executors.newSingleThreadExecutor();
     private final DownloadHistory history;
     private final DownloadManagerDialog manager;
+    private final ApkInstaller installer;
     private String captureScript, key;
     private int document;
     private boolean resumed, destroyed, polling;
@@ -72,7 +73,8 @@ public final class WebDownloads {
     public WebDownloads(Activity activity, WebView web, Supplier<AccessRoute> routes, Consumer<String> notice) {
         this.activity = activity; this.web = web; this.routes = routes; this.notice = notice;
         history = new DownloadHistory(activity);
-        manager = new DownloadManagerDialog(activity, history, this::cancel, this::openSaved);
+        installer = new ApkInstaller(activity, notice, id -> openSaved(id, false));
+        manager = new DownloadManagerDialog(activity, history, this::cancel, this::openSaved, this::browseSaved);
         try (InputStream input = activity.getAssets().open("download-capture.js"); java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192]; int count;
             while ((count = input.read(buffer)) != -1) out.write(buffer, 0, count);
@@ -179,6 +181,7 @@ public final class WebDownloads {
         catch (ActivityNotFoundException e) { fail(task, "设备没有可用的系统文件保存器"); }
     }
     public boolean activityResult(int request, int result, Intent data) {
+        if (installer.activityResult(request)) return true;
         if (request != SAVE_FILE) return false;
         Pending task = pending;
         if (task == null) return true;
@@ -352,7 +355,9 @@ public final class WebDownloads {
         HttpURLConnection http = connection; if (http != null) http.disconnect();
         fail(task, "已取消下载");
     }
-    private void openSaved(String recordId, boolean share) {
+    private void openSaved(String recordId, boolean share) { openSaved(recordId, share, false); }
+    private void browseSaved(String recordId) { openSaved(recordId, false, true); }
+    private void openSaved(String recordId, boolean share, boolean browse) {
         DownloadRecord record = history.get(recordId);
         if (record == null || !record.canOpen() || destroyed) return;
         fileActions.execute(() -> {
@@ -371,9 +376,12 @@ public final class WebDownloads {
                 String inferred = MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
                 if (inferred != null) resolved = inferred;
             }
-            String mime = resolved;
+            boolean apk = record.isApk() || DownloadRecord.APK_MIME.equalsIgnoreCase(resolved);
+            String mime = apk ? DownloadRecord.APK_MIME : resolved;
             handler.post(() -> {
                 if (destroyed) return;
+                if (browse) { installer.browse(uri); return; }
+                if (!share && apk) { installer.install(recordId, uri); return; }
                 Intent action = share ? new Intent(Intent.ACTION_SEND).setType(mime).putExtra(Intent.EXTRA_STREAM, uri)
                         : new Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime);
                 action.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -393,7 +401,7 @@ public final class WebDownloads {
         } catch (Exception ignored) {}
     }
     public void close() {
-        destroyed = true; resumed = false; manager.close(); handler.removeCallbacksAndMessages(null);
+        destroyed = true; resumed = false; installer.close(); manager.close(); handler.removeCallbacksAndMessages(null);
         if (pending != null) {
             Pending task = pending; task.cancelled.set(true);
             history.finish(task.recordId, DownloadRecord.State.INTERRUPTED, "应用已关闭，请回原页面重新下载", task.offset);

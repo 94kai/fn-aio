@@ -30,7 +30,7 @@ import java.util.function.Consumer;
 public final class DownloadManagerDialog {
     private final Activity activity;
     private final DownloadHistory history;
-    private final Consumer<String> cancel;
+    private final Consumer<String> cancel, browse;
     private final BiConsumer<String, Boolean> open;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<String, Row> rows = new LinkedHashMap<>();
@@ -44,10 +44,10 @@ public final class DownloadManagerDialog {
     private static final class Row {
         TextView name, meta, state, amount, note;
         ProgressBar progress;
-        Button open, share, cancel, remove;
+        Button open, share, cancel, remove, browse;
     }
-    public DownloadManagerDialog(Activity activity, DownloadHistory history, Consumer<String> cancel, BiConsumer<String, Boolean> open) {
-        this.activity = activity; this.history = history; this.cancel = cancel; this.open = open;
+    public DownloadManagerDialog(Activity activity, DownloadHistory history, Consumer<String> cancel, BiConsumer<String, Boolean> open, Consumer<String> browse) {
+        this.activity = activity; this.history = history; this.cancel = cancel; this.open = open; this.browse = browse;
     }
     private int dp(int value) { return Math.round(value * activity.getResources().getDisplayMetrics().density); }
     private TextView label(int size, int color) { TextView view = new TextView(activity); view.setTextSize(size); view.setTextColor(color); return view; }
@@ -98,7 +98,10 @@ public final class DownloadManagerDialog {
                 .setNegativeButton("取消", null).setPositiveButton("移除", (d, w) -> { history.remove(id); refresh(); }).create(); confirmation.show();
         });
         for (Button button : new Button[]{row.open, row.share, row.cancel, row.remove}) buttons.addView(button, new LinearLayout.LayoutParams(0, dp(44), 1));
-        card.addView(buttons); return row;
+        card.addView(buttons);
+        row.browse = action("在系统文件浏览器中查看", () -> browse.accept(id));
+        card.addView(row.browse, new LinearLayout.LayoutParams(-1, dp(44)));
+        return row;
     }
     private void refresh() {
         if (dialog == null || !dialog.isShowing()) return;
@@ -128,6 +131,8 @@ public final class DownloadManagerDialog {
             row.amount.setText(record.state == DownloadRecord.State.COMPLETED ? DownloadRecord.formatBytes(record.total)
                 : DownloadRecord.formatBytes(done) + " / " + DownloadRecord.formatBytes(record.total));
             row.note.setText(record.message); row.note.setVisibility(record.message.isEmpty() ? View.GONE : View.VISIBLE);
+            row.open.setText(record.isApk() ? "安装" : "打开");
+            row.browse.setVisibility(record.canOpen() && record.isApk() ? View.VISIBLE : View.GONE);
             row.open.setVisibility(record.canOpen() ? View.VISIBLE : View.GONE); row.share.setVisibility(record.canOpen() ? View.VISIBLE : View.GONE);
             row.cancel.setVisibility(record.active() ? View.VISIBLE : View.GONE); row.remove.setVisibility(record.active() ? View.GONE : View.VISIBLE);
         }

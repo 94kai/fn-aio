@@ -52,7 +52,7 @@ test('Android 访问策略 Java 单元测试',async t=>{
   const output=await mkdtemp(join(root,'.local/android-policy-test-'));
   const compile=spawnSync(javac,['-d',output,...['AccessPolicy.java','AccessRoute.java','FloatingPosition.java','DownloadPolicy.java','DownloadRecord.java'].map(file=>join(source,file)),...['AccessPolicyTest.java','AccessRouteTest.java','DownloadPolicyTest.java','DownloadRecordTest.java'].map(file=>join(root,'android/test',file))],{encoding:'utf8'});
   assert.equal(compile.status,0,compile.stderr);
-  for(const [name,count] of [['AccessPolicyTest',24],['AccessRouteTest',46],['DownloadPolicyTest',37],['DownloadRecordTest',44]]){
+  for(const [name,count] of [['AccessPolicyTest',24],['AccessRouteTest',46],['DownloadPolicyTest',37],['DownloadRecordTest',51]]){
     const run=spawnSync(java,['-cp',output,`top.fnaio.direct.${name}`],{encoding:'utf8'});
     assert.equal(run.status,0,run.stderr);
     assert.match(run.stdout,new RegExp(`${count} tests passed`));
