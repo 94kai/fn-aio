@@ -102,7 +102,9 @@ sudo appcenter-cli start aio
 
 安装前确认 `/var/apps/aio` 没有被其他应用占用。AIO 使用专用包用户 `aio`，通过[飞牛统一应用网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)注册 `/app/aio`，管理入口使用权限 0600 的 Unix Socket；可选业务入口仅监听策略指定的回环地址。
 
-策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `publicProxy`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
+策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `localIpEntries`、`publicProxy`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
+
+FN ID 可能切换到动态 IPv6 直连。可在网关策略加入 `"localIpEntries": [{"protocol":"https","port":1024}]`，允许指定协议/端口下的当前 NAS 网卡 IPv4/IPv6，无需逐个登记变化的 IP。缺省关闭；每次请求重新读取本机地址，不解析客户端域名，不放开任意 Host。Host、Origin、管理写入与 WebSocket 使用一致规则；飞牛登录和所有者管理员限制保留，独立业务入口不变。0.2.2 兼容飞牛网关剥离 Host 端口：从受授权来源或唯一匹配入口恢复；无法消除歧义时拒绝。配置与限制见[动态 IP 入口说明](<docs/configuration.md#fn-id-与动态本机-ip-入口>)。
 
 **忘记怎么配置时，请看[配置、白名单与排障手册](<docs/configuration.md>)**：包含生产路径、各字段含义、不同域名/端口的白名单规则、安全添加命令、备份、JSON/策略校验、仅重启 AIO、403/10330 排障及回滚步骤。修改生产策略后，还要同步 `.local/gateway.json`，避免下次构建覆盖。
 

@@ -20,6 +20,8 @@ export function validatePolicy(input){
   if(!origins.has(input.defaultOrigin))throw fail('默认入口不在允许列表中');
   const localAddresses=new Set(['127.0.0.1','::1',...Object.values(networkInterfaces()).flat().filter(Boolean).map(item=>item.address)]);
   if(!Array.isArray(input.targetHosts)||!input.targetHosts.length||input.targetHosts.some(host=>typeof host!=='string'||!isIP(host)||!localAddresses.has(host)||['0.0.0.0','::'].includes(host)))throw fail('目标必须是当前 NAS 接口上的明确本机 IP 地址');
+  const localIpEntries=input.localIpEntries===undefined?[]:input.localIpEntries;
+  if(!Array.isArray(localIpEntries)||localIpEntries.length>32||localIpEntries.some(value=>!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['protocol','port'].includes(key))||!['http','https'].includes(value.protocol)||!Number.isInteger(value.port)||value.port<1||value.port>65535))throw fail('动态本机入口须为明确的 HTTP(S) 协议与端口，最多 32 项');
   let publicProxy=null;
   if(input.publicProxy!==undefined){
     const value=input.publicProxy;
@@ -31,7 +33,7 @@ export function validatePolicy(input){
     if(Number(url.port||443)===value.port)throw fail('业务内部端口不能与外部端口相同');
     publicProxy={listenHost:value.listenHost,port:value.port,origin:url.origin};
   }
-  return {...input,publicProxy,origins,targetHosts:new Set(input.targetHosts)};
+  return {...input,localIpEntries:localIpEntries.map(({protocol,port})=>({protocol,port})),publicProxy,origins,targetHosts:new Set(input.targetHosts)};
 }
 export function normalizeBasePath(value){
   if(typeof value!=='string'||!value.startsWith('/')||value.startsWith('//')||/[?#\\\s]/.test(value)||/%(?:2f|5c|00)/i.test(value))throw fail('基础路径必须以 / 开头且不含查询或编码分隔符');

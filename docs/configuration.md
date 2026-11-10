@@ -31,6 +31,7 @@
 - `ownerUid`：指定 NAS 所有者的数字 UID，JSON 中是字符串；该用户还必须是飞牛管理员。不是用户名，不是密码。
 - `allowedOrigins`：允许用户访问的入口，格式为完整 `协议://主机[:端口]`。不能含路径、末尾 `/`、查询、账号密码，也不支持 `*`。
 - `defaultOrigin`：必须是 `allowedOrigins` 中的一项；用于私有网关把 Host 改为 localhost 且请求没有可用来源信息时的入口恢复，不是跳转地址。
+- `localIpEntries`：可选数组，缺省为空（关闭）；每项仅含 `protocol`（`http` / `https`）和整数 `port`（1～65535），最多 32 项。按指定协议/端口允许当前网卡 IP 作为私有入口，适用于 FN ID 动态 IPv6，详见下节。
 - `targetHosts`：允许服务回源的 IP，必须属于当前 NAS 本机接口（可含 `127.0.0.1`、`::1`）。不能填域名、外网 IP 或 `0.0.0.0`。NAS 换 IP 后，需同步策略和涉及旧 IP 的服务配置。
 - `publicProxy`：可选的独立业务入口策略。只能监听回环地址，不承载管理路由；完整规则见[业务入口手册](<public-proxy.md>)。
 
@@ -43,6 +44,40 @@ http://192.168.1.2:5666
 ```
 
 HTTPS 默认 443 应写成 `https://nas.example`，不要显式写 `:443`；HTTP 默认 80 同理。飞牛 FN 域名也需要填写完整 Origin。只允许确实使用且信任的入口；添加白名单不会配置 DNS、证书、端口转发或绕过飞牛登录。
+
+## FN ID 与动态本机 IP 入口
+
+FN ID 有时会直接选择 NAS 的 IPv6 地址，地址变化后不适合逐个加入 `allowedOrigins`。AIO 0.2.1 起支持在现有网关策略顶层增加以下字段（不是完整 JSON）：
+
+```json
+"localIpEntries": [
+  {"protocol": "https", "port": 1024}
+]
+```
+
+这样 `https://[当前NAS的IPv6]:1024` 及 `https://当前NAS的IPv4:1024` 均可作为私有入口，不需要在 `allowedOrigins` 再登记每个 IP。如果确实还使用飞牛其他入口，可显式增加相应协议和端口，不要盲目开放。原有域名入口仍通过 `allowedOrigins` 配置，`defaultOrigin` 保持其中一项。
+
+### 生效与安全边界
+
+- AIO 每次私有 HTTP / WebSocket 请求读取当前网卡地址并规范化 IPv6；新增地址立即可用，不用因 IP 变化重启。动态规则不再接受已从网卡移除的地址，但显式写在 `allowedOrigins` 的旧 IP 仍有效，需自行清理。已建立的连接不会因地址变化被主动断开。
+- 只接受 IP 字面量，不对客户端 Host 做 DNS 解析；攻击者域名即使指向 NAS 也不会因此被放行。不是任意 Host、任意 IPv6、网段授权或所有端口授权。不支持带 zone ID 的 IPv6 URL。
+- 0.2.2 修复飞牛 `/app/` 网关通过 `Host $host` 剥离端口的兼容问题：动态规则先匹配当前本机 IP；Host 保留非默认端口时仍须精确匹配授权端口，Host 无端口时仅从该 IP 的授权入口恢复。优先选择已授权且主机一致的 Origin / Referer；没有可用来源且只有动态匹配时，必须唯一，否则返回“动态入口信息不完整”。原静态白名单恢复规则保持不变。建议动态规则只配置实际使用的入口，避免无来源请求无法消除歧义。
+- Host 无法证明外层协议，网关剥离端口后也无法证明原始端口；此时策略限制的是可恢复的 Origin，而不是外层监听器。HTTPS 与监听端口限制仍由飞牛入口保证，AIO 不信任客户端 Forwarded Header，不修改飞牛网关。0.2.1 的动态规则要求 Host 完整端口，不能适配本机真实网关，应升级到 0.2.2。
+- Origin / Referer 恢复与 Host 使用同一份当前地址快照；有 Origin 时必须受授权且与入口匹配。管理写入仍需同源 Origin、JSON 和 `X-AIO-Request: 1`，静态资源、服务转发和 WebSocket 使用同样入口校验。
+- 飞牛网关若把 Host 改为 `localhost`，保留原有恢复方式：优先使用受授权的 Origin / Referer，否则使用 `defaultOrigin`。不依据任意客户端头推断真实入口。
+- 所有者 UID、飞牛管理员身份与跨站限制保持不变。此配置不增加 TCP 监听，不改变独立 `publicProxy` 业务入口的固定 Host 校验；动态规则不会授权与 `publicProxy.origin` 完全相同的 Origin。
+- 入口 IP 授权不等于回源 IP 授权：`targetHosts` 和服务目标仍需显式配置，不会自动扩大为所有网卡 IP。NAT 的外部 IP 若不在 NAS 网卡上，不受此动态规则授权。
+
+### 部署与回滚
+
+这是程序新增能力，**仅给旧版生产策略加字段、再重启旧程序不会生效**。先备份生产策略与服务列表，按下文安装升级注意事项构建并通过飞牛应用中心更新 AIO，不直接覆盖安装目录的源码；不需要修改飞牛 Nginx 或 Lucky。
+
+1. 在本机构建策略 `.local/gateway.json` 增加上述字段，保留其他配置，然后运行 `npm run verify`。
+2. 执行 `npm run build -- /绝对路径/fn-aio/.local/gateway.json`，按下文正式 FPK 更新流程安装；不要使用卸载重装替代更新。
+3. 更新后核对生产策略包含该字段；单独修改生产策略时按后文校验，成功后仅重启 AIO，并同步本机构建策略。
+4. 通过 FN ID 实际登录，检查动态 IPv6 下的管理页、保存配置、服务访问和 WebSocket。现有自动验证与构建成功不代表真实 FN ID 链路已经验收。
+
+移除 `localIpEntries` 或设为 `[]` 后重启 AIO，即关闭动态入口；回滚程序前建议先移除此字段。无需更改服务列表。原静态白名单仍按原规则生效。
 
 ## 添加一个入口：推荐步骤
 
@@ -132,7 +167,9 @@ sudo /usr/bin/node scripts/verify-installed.mjs
 
 ## 安装与升级注意
 
-`appcenter-cli install-fpk` 可用于首次安装，但本机实测对已安装 AIO（包括更高版本的 0.1.1 包）仅输出 `Application [aio] is installed`，文件未被替换。该输出不是升级成功，重启也不会更新代码。命令帮助中提到升级不代表本机实际升级已完成。
+`appcenter-cli install-fpk` 可用于首次安装，但本机实测对已安装 AIO（包括更高版本的 0.1.1 包）仅输出 `Application [aio] is installed`，文件未被替换。0.2.0 → 0.2.1 的正式 FPK 升级重试也退出 0 并输出同样信息，生产 manifest 仍为 0.2.0，`bridge.mjs` / `store.mjs` 与新源码不一致，确认没有升级；原 7 个服务（修订号 24）保持不变且应用仍运行。该输出不是升级成功，重启也不会更新代码。命令帮助中提到升级不代表本机实际升级已完成。
+
+另用 fnos-cli 0.5.1 实测：OAuth 管理员授权成功；`app install-fpk ... --volume-id 1 --dry-run --yes` 上传及预检通过，识别已安装 0.2.0 且 `canUpgrade=true`。但去掉 `--dry-run` 后调用 `POST /app-center/v1/install/task` 返回 `10236`，未完成升级；`app update aio --version 0.2.1 --package-type local --volume-id 1 --dry-run --yes` 在 `POST /app-center/v1/download/task` 返回 `10030`。不能把预检成功当成安装成功，也不能仅凭错误码推断唯一原因。失败后生产策略、服务列表与 manifest 均与安装前备份完全一致，私有接口诊断通过，仍为旧版运行；此 CLI 版本的本地 FPK 覆盖更新路径需进一步适配或使用应用中心界面。
 
 **禁止把 `install-local` 当成无损升级命令。** 本机实测它内部先停用并卸载已有应用，删除私有数据，再安装；曾因安装钩子权限失败（10237）而中断，最终却退出 0。备份不能只放在应用 var/target/home 等任何应用托管目录中，否则可能随卸载删除。
 
