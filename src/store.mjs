@@ -14,11 +14,15 @@ export function authority(value){
 }
 export function validatePolicy(input){
   if(!input||!/^\d{1,10}$/.test(input.ownerUid))throw fail('缺少所有者 UID');
-  if(!Array.isArray(input.allowedOrigins)||!input.allowedOrigins.length)throw fail('缺少飞牛入口');
-  const origins=new Set(input.allowedOrigins.map(value=>{
-    const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.origin!==value||url.username||url.password)throw fail('入口必须为规范 HTTP(S) Origin');return url.origin;
-  }));
-  if(!origins.has(input.defaultOrigin))throw fail('默认入口不在允许列表中');
+  const legacyOrigins=input.allowedOrigins??[];
+  if(!Array.isArray(legacyOrigins))throw fail('旧入口提示必须是数组');
+  const canonicalOrigin=value=>{
+    let url;try{url=new URL(value);}catch{throw fail('入口必须为规范 HTTP(S) Origin');}
+    if(!['http:','https:'].includes(url.protocol)||url.origin!==value||url.username||url.password||/[\s*]/.test(value))throw fail('入口必须为规范 HTTP(S) Origin');
+    return url.origin;
+  };
+  const origins=new Set(legacyOrigins.map(canonicalOrigin));
+  canonicalOrigin(input.defaultOrigin);
   const localAddresses=new Set(['127.0.0.1','::1',...Object.values(networkInterfaces()).flat().filter(Boolean).map(item=>item.address)]);
   if(!Array.isArray(input.targetHosts)||!input.targetHosts.length||input.targetHosts.some(host=>typeof host!=='string'||!isIP(host)||!localAddresses.has(host)||['0.0.0.0','::'].includes(host)))throw fail('目标必须是当前 NAS 接口上的明确本机 IP 地址');
   const localIpEntries=input.localIpEntries===undefined?[]:input.localIpEntries;
@@ -30,7 +34,7 @@ export function validatePolicy(input){
     if(!['127.0.0.1','::1'].includes(value.listenHost))throw fail('业务入口只允许监听回环地址');
     if(!Number.isInteger(value.port)||value.port<1024||value.port>65535||[5666,5667].includes(value.port))throw fail('业务入口端口无效');
     let url;try{url=new URL(value.origin);}catch{throw fail('业务外部入口必须为规范 HTTPS Origin');}
-    if(url.protocol!=='https:'||url.origin!==value.origin||url.username||url.password||/[\s*]/.test(value.origin)||origins.has(value.origin))throw fail('业务外部入口必须为独立的规范 HTTPS Origin');
+    if(url.protocol!=='https:'||url.origin!==value.origin||url.username||url.password||/[\s*]/.test(value.origin)||origins.has(value.origin)||value.origin===input.defaultOrigin)throw fail('业务外部入口必须为独立的规范 HTTPS Origin');
     if(Number(url.port||443)===value.port)throw fail('业务内部端口不能与外部端口相同');
     publicProxy={listenHost:value.listenHost,port:value.port,origin:url.origin};
   }

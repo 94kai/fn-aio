@@ -37,7 +37,7 @@ http://NAS:5666/app/aio/s/notes/hello?q=1
 
 停用或删除只影响后续转发，不停止后端服务；已建立的连接不强制切断。默认服务列表为空。
 
-卡片将访问入口与检查、编辑、启停、删除分区展示，完整链接收在“入口地址与说明”中。**飞牛私有入口固定使用网关策略的 `defaultOrigin`**，路径为 `/app/aio/s/服务标识/`，不随当前管理页面的域名或 IP 变化。将 `defaultOrigin` 配置为 FN 地址即可固定使用该 FN 入口；该值须属于 `allowedOrigins`。打开后需在目标入口登录飞牛，不会迁移当前域名的登录态。管理 API 仍使用当前页面的同源地址。0.2.5 起打包时还将已验证策略中的默认地址注入前端资源（只包含该地址，不包含完整策略）。若接口缺少有效默认入口，使用包内默认地址，仍显示私有入口，不回退到当前域名；若两者都无效才禁用私有入口，其他卡片功能不受影响。有效接口配置优先，修改生产策略后重启 AIO 生效；下次构建前同步本机策略，以更新包内备用值。外部入口单独使用部署策略的 `publicProxy.origin`，不经过飞牛登录。
+卡片将访问入口与检查、编辑、启停、删除分区展示，完整链接收在“入口地址与说明”中。**飞牛私有入口固定使用网关策略的 `defaultOrigin`**，路径为 `/app/aio/s/服务标识/`，不随当前管理页面的域名或 IP 变化。将 `defaultOrigin` 配置为 FN 地址即可固定使用该 FN 入口；0.2.8 起无需将该值加入 `allowedOrigins`，仍必须是规范 HTTP(S) Origin。打开后需在目标入口登录飞牛，不会迁移当前域名的登录态。管理 API 仍使用当前页面的同源地址。0.2.5 起打包时还将已验证策略中的默认地址注入前端资源（只包含该地址，不包含完整策略）。若接口缺少有效默认入口，使用包内默认地址，仍显示私有入口，不回退到当前域名；若两者都无效才禁用私有入口，其他卡片功能不受影响。有效接口配置优先，修改生产策略后重启 AIO 生效；下次构建前同步本机策略，以更新包内备用值。外部入口单独使用部署策略的 `publicProxy.origin`，不经过飞牛登录。
 
 ## 可选的 DSH token 快捷复制（0.2.6）
 
@@ -114,11 +114,11 @@ sudo appcenter-cli start aio
 
 安装前确认 `/var/apps/aio` 没有被其他应用占用。AIO 使用专用包用户 `aio`，通过[飞牛统一应用网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)注册 `/app/aio`，管理入口使用权限 0600 的 Unix Socket；可选业务入口仅监听策略指定的回环地址。
 
-策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `localIpEntries`、`publicProxy`、`tokenLogs`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
+策略字段：`ownerUid`、`defaultOrigin`、`targetHosts`，以及可选的 `publicProxy`、`tokenLogs`。旧 `allowedOrigins`、`localIpEntries` 仍可保留作为缺少来源信息时的地址恢复提示，但不再作为访问白名单。
 
-FN ID 可能切换到动态 IPv6 直连。可在网关策略加入 `"localIpEntries": [{"protocol":"https","port":1024}]`，允许指定协议/端口下的当前 NAS 网卡 IPv4/IPv6，无需逐个登记变化的 IP。缺省关闭；每次请求重新读取本机地址，不解析客户端域名，不放开任意 Host。Host、Origin、管理写入与 WebSocket 使用一致规则；飞牛登录和所有者管理员限制保留，独立业务入口不变。0.2.2 兼容飞牛网关剥离 Host 端口：从受授权来源或唯一匹配入口恢复；无法消除歧义时拒绝。配置与限制见[动态 IP 入口说明](<docs/configuration.md#fn-id-与动态本机-ip-入口>)。
+**0.2.8 起取消私有入口 Host / Origin 白名单**：通过飞牛登录后的指定所有者管理员可使用新的域名、端口或动态 IPv4/IPv6 打开 AIO，无需维护入口列表。管理写入、token 复制、服务转发和 WebSocket 仍校验来源与当前 Host 是否匹配，拒绝跨站及同站不同源请求；Host 被飞牛剥离端口时仅校验仍可见的主机部分，外层协议/端口由飞牛入口保证。Host 被改为 localhost 时，新来源需要浏览器 `Sec-Fetch-Site: same-origin` 证明；旧客户端缺少该头时仅接受固定 `defaultOrigin`。不信任任意 Forwarded Header，不修改飞牛网关。服务目标 IP 白名单及独立外部业务 Host 校验不变，卡片私有链接仍固定使用 `defaultOrigin`。详见[入口校验说明](<docs/configuration.md#私有入口不再使用白名单028>)。
 
-**忘记怎么配置时，请看[配置、白名单与排障手册](<docs/configuration.md>)**：包含生产路径、各字段含义、不同域名/端口的白名单规则、安全添加命令、备份、JSON/策略校验、仅重启 AIO、403/10330 排障及回滚步骤。修改生产策略后，还要同步 `.local/gateway.json`，避免下次构建覆盖。
+**忘记怎么配置时，请看[配置、白名单与排障手册](<docs/configuration.md>)**：包含生产路径、各字段含义、新版入口同源规则、旧版白名单维护记录、备份、JSON/策略校验、仅重启 AIO、403/10330 排障及回滚步骤。修改生产策略后，还要同步 `.local/gateway.json`，避免下次构建覆盖。
 
 ## 配置和安全
 

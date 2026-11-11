@@ -9,7 +9,7 @@ import {Store,validatePolicy,validateServices} from '../src/store.mjs';
 
 const policy={ownerUid:'1000',allowedOrigins:['https://aio.example','http://127.0.0.1:5666'],defaultOrigin:'https://aio.example',targetHosts:['127.0.0.1']};
 const identity={host:'aio.example','x-trim-userid':'1000','x-trim-isadmin':'true'};
-async function fixture(t,{business=false,tokenLogs=false}={}){
+async function fixture(t,{business=false,tokenLogs=false,entryHints=true}={}){
   const seen=[],remoteSockets=new Set();let streamClosed;
   const streamDone=new Promise(resolve=>streamClosed=resolve);
   const upstream=http.createServer(async(req,res)=>{
@@ -29,6 +29,7 @@ async function fixture(t,{business=false,tokenLogs=false}={}){
   await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
   const directory=await mkdtemp(join(tmpdir(),'aio-test-')),socketPath=join(directory,'aio.sock'),dataFile=join(directory,'services.json');
   const config=structuredClone(policy);
+  if(!entryHints)delete config.allowedOrigins;
   if(tokenLogs){
     config.tokenLogs={dsh:join(directory,'dsh-out.log'),rescue:join(directory,'dsh-rescue-out.log')};
     await writeFile(config.tokenLogs.dsh,'2026-11-11T11:39:23: dsh web: http://127.0.0.1:2007/?token=test_normal_token_123456\n');
@@ -69,12 +70,26 @@ test('所有管理、静态和服务请求都先验证飞牛所有者管理员�
   assert.equal(f.seen.length,0);
 });
 
-test('正确处理 FN localhost 内部改写，拒绝未知 Host、恶意 Origin 和跨站操作',async t=>{
+test('正确处理 FN localhost 内部改写，拒绝恶意 Origin 和跨站操作',async t=>{
   const f=await fixture(t);
   assert.equal((await f.request('GET','/app/aio/',undefined,{host:'localhost'})).status,200);
-  for(const headers of [{host:'evil.example'},{origin:'https://evil.example'},{origin:'null'},{'sec-fetch-site':'cross-site'}])assert.equal((await f.request('GET','/app/aio/api/health',undefined,headers)).status,403);
+  for(const headers of [{origin:'https://evil.example'},{origin:'null'},{'sec-fetch-site':'cross-site'},{'sec-fetch-site':'same-site'}])assert.equal((await f.request('GET','/app/aio/api/health',undefined,headers)).status,403);
   assert.equal((await f.request('GET','/app/aio/',undefined,{'sec-fetch-site':'cross-site','sec-fetch-mode':'navigate','sec-fetch-dest':'document'})).status,200);
   assert.equal((await f.request('GET','/app/aio/?x=1',undefined,{'sec-fetch-site':'cross-site','sec-fetch-mode':'navigate','sec-fetch-dest':'document'})).status,403);
+});
+
+test('新域名和动态 IP 无需白名单，保留管理写入和 token 复制的同源限制',async t=>{
+  const f=await fixture(t,{tokenLogs:true,entryHints:false});let revision=0;
+  for(const [host,origin]of [['new.example:8888','https://new.example:8888'],['new.example','https://new.example:8888'],['[2001:db8::1234]','https://[2001:db8::1234]:1024'],['192.0.2.10','http://192.0.2.10:1023'],['localhost','https://new.example:8888']]){
+    const headers={host,origin,'sec-fetch-site':'same-origin'};
+    assert.equal((await f.request('GET','/app/aio/',undefined,headers)).status,200);
+    assert.equal((await f.api('GET','services',undefined,headers)).status,200);
+    assert.equal((await f.api('POST','tokens/dsh',{},headers)).status,200);
+    assert.equal((await f.api('PUT','services',{revision:revision++,services:[]},headers)).status,200);
+  }
+  for(const headers of [{host:'new.example',origin:'https://other.example'},{host:'new.example:8888',origin:'https://new.example:9999'},{host:'localhost',origin:'https://other.example'}])assert.equal((await f.api('POST','tokens/dsh',{},headers)).status,403);
+  assert.equal((await f.request('GET','/app/aio/',undefined,{host:'new.example'})).status,200);
+  assert.equal((await f.request('GET','/app/aio/',undefined,{host:'new.example','x-trim-userid':''})).status,403);
 });
 
 test('独立管理页面中文、CSP、自托管资源及 HEAD 无正文',async t=>{
@@ -267,7 +282,9 @@ test('损坏配置拒绝初始化，绝不覆盖原文件',async t=>{
 
 test('策略和配置白名单不接受不明确的入口或任意目标',()=>{
   assert.throws(()=>validatePolicy({...policy,targetHosts:['example.com']}));
-  assert.throws(()=>validatePolicy({...policy,defaultOrigin:'https://evil.example'}));
+  assert.equal(validatePolicy({...policy,allowedOrigins:undefined,defaultOrigin:'https://new.example'}).defaultOrigin,'https://new.example');
+  assert.equal(validatePolicy({...policy,allowedOrigins:[]}).origins.size,0);
+  for(const defaultOrigin of ['javascript:alert(1)','https://user:pass@example.com','https://example.com/path','https://*.example.com'])assert.throws(()=>validatePolicy({...policy,defaultOrigin}));
   assert.throws(()=>validateServices(Array.from({length:51},()=>({})),validatePolicy(policy)),/50/);
 });
 

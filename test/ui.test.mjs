@@ -15,6 +15,11 @@ test('管理脚本引用的表单和操作元素均存在，所有资源自托�
   assert.match(html,/assets\/app\.js/);assert.match(html,/assets\/style\.css/);
 });
 
+test('常用 token 复制区域排在服务列表之前，保持分区间距',()=>{
+  assert.ok(html.indexOf('id="token-section"')<html.indexOf('<h2>我的服务'));
+  assert.match(css,/\.token-section\{margin-bottom:28px\}/);
+});
+
 test('服务文本不作为 HTML 注入，配置请求保护和破坏性操作确认保留',()=>{
   assert.doesNotMatch(js,/innerHTML|eval\(|document\.cookie|localStorage|sessionStorage/);
   assert.match(js,/textContent=value/);assert.match(js,/credentials:'same-origin'/);

@@ -56,7 +56,7 @@ button:disabled{opacity:.5;cursor:default}
 .result{font-size:12px;overflow-wrap:anywhere;color:var(--muted)}
 .result[data-ok=false]{color:var(--bad)}
 .empty{padding:32px 18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:15px}
-.token-section{margin-top:28px}
+.token-section{margin-bottom:28px}
 .token-time{font-variant-numeric:tabular-nums}
 dialog{width:min(520px,calc(100% - 28px));max-height:85dvh;overflow:auto;padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--card);color:var(--ink)}
 dialog::backdrop{background:#10172999}

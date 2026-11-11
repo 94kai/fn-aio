@@ -28,35 +28,32 @@ function localIpOrigins(policy){
 export function contextFor(req,policy,target){
   if(req.headers['x-trim-userid']!==policy.ownerUid||req.headers['x-trim-isadmin']!=='true')throw fail('仅允许已登录飞牛的指定所有者管理员访问',403);
   let raw;try{raw=authority(req.headers.host);}catch{throw fail('入口 Host 无效',400);}
-  const dynamicOrigins=localIpOrigins(policy),allowedOrigins=new Set([...policy.origins,...dynamicOrigins]);
+  const landing=req.method==='GET'&&!req.headers.upgrade&&target.pathname===ROOT+'/'&&!target.search&&req.headers['sec-fetch-mode']==='navigate'&&req.headers['sec-fetch-dest']==='document';
+  const site=req.headers['sec-fetch-site'];
+  if(site&&!['same-origin','none'].includes(site)&&!landing)throw fail('拒绝跨站访问',403);
+  const matchesHost=url=>url.hostname===raw.hostname&&(!raw.port||url.host===raw.host);
   let candidate;
   if(req.headers.origin!==undefined){
-    if(typeof req.headers.origin!=='string'||!allowedOrigins.has(req.headers.origin))throw fail('请求来源不在允许列表',403);
-    candidate=req.headers.origin;
+    try{
+      const url=new URL(req.headers.origin);
+      if(!['http:','https:'].includes(url.protocol)||url.origin!==req.headers.origin)throw new Error();
+      candidate=url;
+    }catch{throw fail('请求 Origin 无效',403);}
+    if(raw.hostname==='localhost'){
+      // Host may be rewritten by fnOS. Without the external host, require the
+      // browser's same-origin proof (or the fixed default origin for old clients).
+      if(site!=='same-origin'&&candidate.origin!==policy.defaultOrigin)throw fail('网关改写了 Host，缺少浏览器同源证明',403);
+    }else if(!matchesHost(candidate))throw fail('Origin 与入口不一致',403);
   }else if(typeof req.headers.referer==='string'){
-    try{const value=new URL(req.headers.referer).origin;if(allowedOrigins.has(value))candidate=value;}catch{}
+    try{
+      const url=new URL(req.headers.referer);
+      if(['http:','https:'].includes(url.protocol)&&!url.username&&!url.password&&(matchesHost(url)||(raw.hostname==='localhost'&&site==='same-origin')))candidate=url;
+    }catch{}
   }
-  let origin;
-  if(raw.host==='localhost')origin=candidate??policy.defaultOrigin;
-  else{
-    const matching=[...policy.origins].filter(value=>{
-      const url=new URL(value);if(url.hostname!==raw.hostname)return false;
-      return !raw.port||new URL(`${url.protocol}//${req.headers.host}`).host===url.host;
-    });
-    const staticCount=matching.length;
-    // fnOS forwards $host without its port. Recover only from configured origins
-    // for this literal interface IP; never infer ports from forwarded headers.
-    matching.push(...[...dynamicOrigins].filter(value=>{
-      const url=new URL(value);
-      return url.hostname===raw.hostname&&(!raw.port||new URL(`${url.protocol}//${req.headers.host}`).host===url.host);
-    }));
-    if(!matching.length)throw fail('入口 Host 不在允许列表',403);
-    if(candidate&&!matching.includes(candidate))throw fail('Origin 与入口不一致',403);
-    if(!candidate&&!staticCount&&new Set(matching).size>1)throw fail('动态入口信息不完整，请使用明确的同源入口',403);
-    origin=candidate??matching[0];
-  }
-  const landing=req.method==='GET'&&!req.headers.upgrade&&target.pathname===ROOT+'/'&&!target.search&&req.headers['sec-fetch-mode']==='navigate'&&req.headers['sec-fetch-dest']==='document';
-  if(req.headers['sec-fetch-site']==='cross-site'&&!landing)throw fail('拒绝跨站访问',403);
+  // Legacy entries are recovery hints only, never an admission whitelist.
+  const hints=[policy.defaultOrigin,...policy.origins,...localIpOrigins(policy)];
+  const hint=hints.find(value=>matchesHost(new URL(value)));
+  const origin=candidate?.origin??(raw.hostname==='localhost'?policy.defaultOrigin:hint??new URL(new URL(policy.defaultOrigin).protocol+'//'+raw.host).origin);
   return {origin};
 }
 export function publicContextFor(req,policy,target){
@@ -104,7 +101,7 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
     if(target.pathname===ROOT){res.writeHead(308,{location:ROOT+'/','cache-control':'no-store'});res.end();return;}
     if(target.pathname===ROOT+'/api/health'){
       if(!['GET','HEAD'].includes(req.method))throw fail('方法不支持',405);
-      json(res,{name:'AIO',version:'0.2.6',privateOnly:!policy.publicProxy});return;
+      json(res,{name:'AIO',version:'0.2.8',privateOnly:!policy.publicProxy});return;
     }
     if(target.pathname===ROOT+'/api/services'){
       apiAdmission(req,context);

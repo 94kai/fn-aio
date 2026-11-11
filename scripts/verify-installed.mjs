@@ -19,7 +19,8 @@ for(const [name,path,headers,status,match]of [
   ['无 NAS 身份拒绝','/app/aio/',{'x-trim-userid':''},403],
   ['非所有者拒绝','/app/aio/',{'x-trim-userid':policy.ownerUid==='1001'?'1002':'1001'},403],
   ['非管理员拒绝','/app/aio/',{'x-trim-isadmin':'false'},403],
-  ['未知 Host 拒绝','/app/aio/',{host:'evil.example'},403],
+  ['新入口无需白名单但仍须已登录','/app/aio/',{host:'new.example'},200],
+  ['新入口无 NAS 身份仍拒绝','/app/aio/',{host:'new.example','x-trim-userid':''},403],
   ['跨站 Origin 拒绝','/app/aio/api/health',{origin:'https://evil.example'},403],
   ['管理请求缺少标记拒绝','/app/aio/api/services',{},403]
 ]){
