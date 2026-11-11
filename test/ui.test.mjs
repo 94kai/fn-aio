@@ -106,6 +106,26 @@ test('打包默认入口只接受规范地址，配置标记缺失时拒绝生�
   assert.equal(vm.runInContext("entry({id:'notes'})",context),'https://runtime.fnos.net/app/aio/s/notes/');
 });
 
+test('复制 token 仅显式 POST 返回秘密，剪贴板受限时弹窗可清空且有超时',async()=>{
+  const source=js.slice(js.indexOf('let tokenTimer;'),js.indexOf("$('token-reload').addEventListener"));
+  for(const blocked of [false,true]){
+    const nodes=new Map(),copied=[],messages=[],timers=[];
+    const $=id=>{if(!nodes.has(id))nodes.set(id,{value:'',textContent:'',showModal(){this.open=true;},close(){this.open=false;},focus(){},select(){}});return nodes.get(id);};
+    const context=vm.createContext({$,navigator:{clipboard:{writeText:async value=>{if(blocked)throw new Error('blocked');copied.push(value);}}},api:async(path,method,body)=>{assert.equal(path,'tokens/rescue');assert.equal(method,'POST');assert.deepEqual(JSON.parse(JSON.stringify(body)),{});return {token:'fake_rescue_token_123456',timestamp:'2026-11-11T11:39:23'};},message:text=>messages.push(text),setTimeout:(fn,ms)=>{timers.push({fn,ms});return 1;},clearTimeout(){}});
+    vm.runInContext(source,context);
+    await vm.runInContext("copyServiceToken({id:'rescue',name:'DSH 救援模式'},$('time'))",context);
+    assert.match($('time').textContent,/2026-11-11T11:39:23/);
+    assert.ok(messages.every(text=>!text.includes('fake_rescue_token')));
+    if(blocked){
+      assert.equal($('token-value').value,'fake_rescue_token_123456');
+      assert.equal($('token-dialog').open,true);assert.equal(timers[0].ms,60000);
+      timers[0].fn();assert.equal($('token-value').value,'');assert.equal($('token-dialog').open,false);
+    }else{assert.deepEqual(copied,['fake_rescue_token_123456']);assert.equal($('token-value').value,'');}
+  }
+  assert.match(js,/source\.rescue\?'救援模式':'常规模式'/);
+  assert.match(js,/pagehide',\(\)=>\{clearToken\(\)/);
+});
+
 test('手机和暗色采用局部样式，刷新/操作目标至少 44px，长地址可换行',()=>{
   assert.match(css,/min-height:44px/);assert.match(css,/font-size:16px/);
   assert.match(css,/safe-area-inset-bottom/);assert.match(css,/prefers-color-scheme:dark/);

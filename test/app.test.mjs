@@ -9,7 +9,7 @@ import {Store,validatePolicy,validateServices} from '../src/store.mjs';
 
 const policy={ownerUid:'1000',allowedOrigins:['https://aio.example','http://127.0.0.1:5666'],defaultOrigin:'https://aio.example',targetHosts:['127.0.0.1']};
 const identity={host:'aio.example','x-trim-userid':'1000','x-trim-isadmin':'true'};
-async function fixture(t,{business=false}={}){
+async function fixture(t,{business=false,tokenLogs=false}={}){
   const seen=[],remoteSockets=new Set();let streamClosed;
   const streamDone=new Promise(resolve=>streamClosed=resolve);
   const upstream=http.createServer(async(req,res)=>{
@@ -29,6 +29,11 @@ async function fixture(t,{business=false}={}){
   await new Promise(resolve=>upstream.listen(0,'127.0.0.1',resolve));
   const directory=await mkdtemp(join(tmpdir(),'aio-test-')),socketPath=join(directory,'aio.sock'),dataFile=join(directory,'services.json');
   const config=structuredClone(policy);
+  if(tokenLogs){
+    config.tokenLogs={dsh:join(directory,'dsh-out.log'),rescue:join(directory,'dsh-rescue-out.log')};
+    await writeFile(config.tokenLogs.dsh,'2026-11-11T11:39:23: dsh web: http://127.0.0.1:2007/?token=test_normal_token_123456\n');
+    await writeFile(config.tokenLogs.rescue,'2026-11-11T11:40:00: dsh web: http://127.0.0.1:2008/?token=test_rescue_token_654321\n');
+  }
   if(business){
     const reservation=http.createServer();await new Promise(resolve=>reservation.listen(0,'127.0.0.1',resolve));
     const port=reservation.address().port;await new Promise(resolve=>reservation.close(resolve));
@@ -99,6 +104,54 @@ test('管理服务接口返回策略默认入口，不以当前访问来源替�
   assert.equal(result.status,200);
   assert.equal(result.value.policy.defaultOrigin,policy.defaultOrigin);
   assert.equal(result.value.policy.publicOrigin,null);
+});
+
+test('token 日志默认关闭，未配置的来源不可读取',async t=>{
+  const f=await fixture(t);
+  assert.deepEqual((await f.api('GET','tokens')).value,{sources:[]});
+  assert.equal((await f.api('POST','tokens/dsh',{})).status,404);
+});
+
+test('token 元数据不含秘密或路径，仅显式 POST 返回对应来源最新 token',async t=>{
+  const f=await fixture(t,{tokenLogs:true});
+  const list=await f.api('GET','tokens');
+  assert.equal(list.status,200);assert.equal(list.headers['cache-control'],'no-store');
+  assert.equal(list.value.sources[0].timestamp,'2026-11-11T11:39:23');
+  assert.equal(list.value.sources[1].rescue,true);
+  assert.doesNotMatch(list.text,/test_normal|test_rescue|\.log|127\.0\.0\.1/);
+  for(const [id,token]of [['dsh','test_normal_token_123456'],['rescue','test_rescue_token_654321']]){
+    const result=await f.api('POST','tokens/'+id,{});
+    assert.equal(result.status,200);assert.equal(result.value.token,token);
+    assert.equal(result.headers['cache-control'],'no-store');
+    assert.doesNotMatch(result.text,/\.log|127\.0\.0\.1/);
+  }
+  await writeFile(f.config.tokenLogs.dsh,'2026-11-11T12:00:00: dsh web: http://127.0.0.1:2007/?token=test_newest_token_123456\n');
+  assert.equal((await f.api('POST','tokens/dsh',{})).value.token,'test_newest_token_123456');
+  assert.doesNotMatch((await f.api('GET','services')).text,/tokenLogs|\.log|test_newest/);
+});
+
+test('token API 保留身份、同源和 JSON 保护，不能读任意文件或经外部业务访问',async t=>{
+  const f=await fixture(t,{tokenLogs:true,business:true});
+  for(const headers of [{'x-trim-userid':''},{'x-trim-userid':'1001'},{'x-trim-isadmin':'false'},{'x-aio-request':''},{origin:'https://evil.example'},{'sec-fetch-site':'cross-site'}]){
+    assert.equal((await f.api('POST','tokens/dsh',{},headers)).status,403);
+  }
+  assert.equal((await f.api('POST','tokens/dsh',{}, {origin:''})).status,403);
+  assert.equal((await f.api('POST','tokens/dsh',{}, {'content-type':'text/plain'})).status,415);
+  assert.equal((await f.api('GET','tokens/dsh')).status,405);
+  assert.equal((await f.api('POST','tokens/missing',{})).status,404);
+  assert.equal((await f.api('POST','tokens/dsh?path=/etc/passwd',{})).status,400);
+  assert.equal((await f.publicRequest('GET','/app/aio/api/tokens')).status,404);
+  assert.equal((await f.publicRequest('POST','/app/aio/api/tokens/dsh',{})).status,404);
+});
+
+test('单个 token 日志损坏不阻止其他来源，错误响应不泄露原文或文件路径',async t=>{
+  const f=await fixture(t,{tokenLogs:true});
+  await writeFile(f.config.tokenLogs.dsh,'2026-11-11T12:00:00: dsh web: http://127.0.0.1/?token=bad_secret\n');
+  const result=await f.api('GET','tokens');
+  assert.equal(result.value.sources[0].available,false);
+  assert.equal(result.value.sources[1].available,true);
+  assert.doesNotMatch(result.text,/bad_secret|\.log|127\.0\.0\.1/);
+  assert.equal((await f.api('POST','tokens/dsh',{})).status,422);
 });
 
 test('配置增删改持久化、私有权限和前一版本备份',async t=>{

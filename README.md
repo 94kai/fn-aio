@@ -39,6 +39,12 @@ http://NAS:5666/app/aio/s/notes/hello?q=1
 
 卡片将访问入口与检查、编辑、启停、删除分区展示，完整链接收在“入口地址与说明”中。**飞牛私有入口固定使用网关策略的 `defaultOrigin`**，路径为 `/app/aio/s/服务标识/`，不随当前管理页面的域名或 IP 变化。将 `defaultOrigin` 配置为 FN 地址即可固定使用该 FN 入口；该值须属于 `allowedOrigins`。打开后需在目标入口登录飞牛，不会迁移当前域名的登录态。管理 API 仍使用当前页面的同源地址。0.2.5 起打包时还将已验证策略中的默认地址注入前端资源（只包含该地址，不包含完整策略）。若接口缺少有效默认入口，使用包内默认地址，仍显示私有入口，不回退到当前域名；若两者都无效才禁用私有入口，其他卡片功能不受影响。有效接口配置优先，修改生产策略后重启 AIO 生效；下次构建前同步本机策略，以更新包内备用值。外部入口单独使用部署策略的 `publicProxy.origin`，不经过飞牛登录。
 
+## 可选的 DSH token 快捷复制（0.2.6）
+
+管理员在部署策略中显式配置 `tokenLogs` 后，管理页增加“DSH 登录 token”区域，分别显示常规/救援模式、最近记录的原始时间，并支持复制最新 token。每次点击都重新读取对应日志，不把 token 放进访问链接、服务配置、导出文件、浏览器存储或 AIO 日志。浏览器阻止自动复制时提供短时手动复制弹窗，关闭、离页或 60 秒后清空；系统剪贴板及其历史由用户自行管理。
+
+这是一项用户显式授权的只读日志集成，默认关闭；仅指定 NAS 所有者管理员可用，独立外部业务入口不提供此 API。不修改 DSH、PM2 或日志权限。日志时间不证明 token 仍有效。配置方法、尾部扫描范围和安全限制见[配置手册](<docs/configuration.md#dsh-token-日志只读集成>)。
+
 ## 可选的 Lucky 业务入口（0.2.0）
 
 由管理员在网关策略中配置可选 `publicProxy`（缺省不监听 TCP）：
@@ -108,7 +114,7 @@ sudo appcenter-cli start aio
 
 安装前确认 `/var/apps/aio` 没有被其他应用占用。AIO 使用专用包用户 `aio`，通过[飞牛统一应用网关](https://developer.fnnas.com/docs/core-concepts/gateway-registration/)注册 `/app/aio`，管理入口使用权限 0600 的 Unix Socket；可选业务入口仅监听策略指定的回环地址。
 
-策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `localIpEntries`、`publicProxy`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
+策略字段：`ownerUid`、`allowedOrigins`、`defaultOrigin`、`targetHosts`，以及可选的 `localIpEntries`、`publicProxy`、`tokenLogs`。它决定入口和目标安全边界，不在普通服务配置页面中放宽。
 
 FN ID 可能切换到动态 IPv6 直连。可在网关策略加入 `"localIpEntries": [{"protocol":"https","port":1024}]`，允许指定协议/端口下的当前 NAS 网卡 IPv4/IPv6，无需逐个登记变化的 IP。缺省关闭；每次请求重新读取本机地址，不解析客户端域名，不放开任意 Host。Host、Origin、管理写入与 WebSocket 使用一致规则；飞牛登录和所有者管理员限制保留，独立业务入口不变。0.2.2 兼容飞牛网关剥离 Host 端口：从受授权来源或唯一匹配入口恢复；无法消除歧义时拒绝。配置与限制见[动态 IP 入口说明](<docs/configuration.md#fn-id-与动态本机-ip-入口>)。
 
@@ -122,7 +128,7 @@ FN ID 可能切换到动态 IPv6 直连。可在网关策略加入 `"localIpEntr
 - 私有管理 Socket 校验飞牛提供的用户身份（本机管理员不在该隔离边界内）；没有飞牛登录的公网请求不能靠伪造身份 Header 进入管理功能。独立业务监听器无管理路由，不信任飞牛身份 Header，仅开放逐服务授权的转发。
 - 请求头上限 32 KiB，管理 JSON 上限 128 KiB，最多 50 个服务、每个入口最多 128 个连接；业务上传流式转发，文件大小由后端自行限制。连通检查 5 秒超时且不跟随重定向。目标必须是策略列出的当前 NAS 本机接口 IP，不接受任意 DNS 或外部公网目标。
 - 日志不记录请求 URL、Cookie、Authorization、请求体或服务配置内容。
-- AIO 不直接提供公网 HTTPS，不绕过飞牛管理登录；外部业务由 Lucky 等反代接入可选回环端口。源代码不读取 DSH 配置、凭据、会话或安装目录。
+- AIO 不直接提供公网 HTTPS，不绕过飞牛管理登录；外部业务由 Lucky 等反代接入可选回环端口。默认不读取 DSH 私人数据；唯一例外是管理员显式配置的两类启动日志，用于用户授权的 token 复制，不读取 DSH 配置、会话数据库或安装目录。**启用后，受信任的同源业务网页也属于 token 接口的浏览器安全边界；只接入可信服务。**
 
 ## 启停和回滚
 

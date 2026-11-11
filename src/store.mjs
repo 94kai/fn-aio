@@ -3,6 +3,7 @@ import {dirname} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {isIP} from 'node:net';
 import {networkInterfaces} from 'node:os';
+import {validateTokenLogs} from './token-logs.mjs';
 
 export function fail(message,status=400){return Object.assign(new Error(message),{status});}
 export function authority(value){
@@ -33,7 +34,7 @@ export function validatePolicy(input){
     if(Number(url.port||443)===value.port)throw fail('业务内部端口不能与外部端口相同');
     publicProxy={listenHost:value.listenHost,port:value.port,origin:url.origin};
   }
-  return {...input,localIpEntries:localIpEntries.map(({protocol,port})=>({protocol,port})),publicProxy,origins,targetHosts:new Set(input.targetHosts)};
+  return {...input,tokenLogs:validateTokenLogs(input.tokenLogs),localIpEntries:localIpEntries.map(({protocol,port})=>({protocol,port})),publicProxy,origins,targetHosts:new Set(input.targetHosts)};
 }
 export function normalizeBasePath(value){
   if(typeof value!=='string'||!value.startsWith('/')||value.startsWith('//')||/[?#\\\s]/.test(value)||/%(?:2f|5c|00)/i.test(value))throw fail('基础路径必须以 / 开头且不含查询或编码分隔符');

@@ -70,7 +70,7 @@ async function load(){
   const next=await api('services');if(!Array.isArray(next.services)||!Number.isSafeInteger(next.revision))throw new Error('配置响应无效');
   const selectedHost=$('host').value;
   state=next;ready=true;checks.clear();$('host').replaceChildren(...state.policy.targetHosts.map(host=>element('option',{value:host,text:host})));
-  if(state.policy.targetHosts.includes(selectedHost))$('host').value=selectedHost;render();
+  if(state.policy.targetHosts.includes(selectedHost))$('host').value=selectedHost;render();await loadTokens();
 }
 async function save(services){
   const opening=services.some(item=>item.publicAccess&&item.enabled&&!state.services.some(previous=>previous.id===item.id&&previous.publicAccess&&previous.enabled));
@@ -107,5 +107,50 @@ $('import-file').addEventListener('change',()=>run(async()=>{
   if(!confirm('导入会替换全部 AIO 服务配置，不会修改后端服务。确定继续？'))return;
   await save(value.services);cancel();message('服务配置已导入。');
 }));
-window.addEventListener('pagehide',()=>{for(const controller of controllers)controller.abort();});
+let tokenTimer;
+function clearToken(){clearTimeout(tokenTimer);$('token-value').value='';}
+function closeToken(){clearToken();$('token-dialog').close();}
+function tokenTime(value){return value?'日志时间：'+value+'（日志原文）':'尚无可用记录';}
+async function copyServiceToken(source,time){
+  clearToken();
+  const value=await api('tokens/'+source.id,'POST',{});
+  time.textContent=tokenTime(value.timestamp);
+  if(typeof value.token!=='string'||!/^[-_a-zA-Z0-9]{16,512}$/.test(value.token))throw new Error('token 响应无效');
+  try{
+    await navigator.clipboard.writeText(value.token);
+    message(source.name+' token 已复制；请勿分享给他人。');
+  }catch{
+    $('token-dialog-title').textContent=source.name+' · '+value.timestamp;
+    $('token-value').value=value.token;$('token-dialog').showModal();$('token-value').focus();$('token-value').select();
+    tokenTimer=setTimeout(closeToken,60000);
+    message('浏览器未允许自动复制，请在弹窗中继续复制。');
+  }
+}
+async function loadTokens(){
+  try{
+    const result=await api('tokens');
+    if(!Array.isArray(result.sources))throw new Error('token 状态响应无效');
+    $('token-section').hidden=!result.sources.length;
+    $('token-sources').replaceChildren(...result.sources.map(source=>{
+      const time=element('p',{className:'token-time',text:tokenTime(source.timestamp)});
+      return element('article',{className:'card'},[
+        element('div',{className:'card-top'},[element('h3',{text:source.name}),element('span',{className:'badge',text:source.rescue?'救援模式':'常规模式'})]),time,
+        element('p',{text:source.available?'点击时重新读取最新 token，不展示明文。':source.message||'尚无可用记录'}),
+        element('button',{type:'button',className:'primary',text:'复制最新 token',onClick:()=>run(()=>copyServiceToken(source,time))}),
+      ]);
+    }));
+  }catch{
+    $('token-section').hidden=false;
+    $('token-sources').replaceChildren(element('p',{className:'result',text:'无法读取 token 日志状态，请确认 AIO 已升级并配置日志来源，然后重试。'}));
+  }
+}
+$('token-reload').addEventListener('click',()=>run(loadTokens));
+$('token-close').addEventListener('click',closeToken);
+$('token-dialog').addEventListener('close',clearToken);
+$('token-copy').addEventListener('click',async()=>{
+  const input=$('token-value');if(!input.value)return;
+  try{input.focus();input.select();if(!document.execCommand('copy'))await navigator.clipboard.writeText(input.value);closeToken();message('token 已复制；请勿分享给他人。');}
+  catch{message('复制被浏览器阻止，请选中文本后手动复制。',true);}
+});
+window.addEventListener('pagehide',()=>{clearToken();for(const controller of controllers)controller.abort();});
 run(load);

@@ -13,12 +13,12 @@ const output=join(root,'.local');await mkdir(output,{recursive:true,mode:0o700})
 const stage=await mkdtemp(join(output,'build-'));
 for(const dir of ['app/web','app/ui/images','config','cmd'])await mkdir(join(stage,dir),{recursive:true});
 const put=(name,content,mode=0o644)=>writeFile(join(stage,name),content,{mode,flag:'wx'});
-await put('manifest',`appname = aio\nversion = 0.2.5\ndisplay_name = AIO 服务入口\ndesc = 独立的飞牛私有服务网关：统一管理 NAS 自建 HTTP 服务，不依赖 DSH\nplatform = x86\nsource = thirdparty\nmaintainer = FN AIO\ndistributor = FN AIO\ndesktop_uidir = ui\ndesktop_applaunchname = aio.main\ncheckport = false\n`);
+await put('manifest',`appname = aio\nversion = 0.2.6\ndisplay_name = AIO 服务入口\ndesc = 独立的飞牛私有服务网关：统一管理 NAS 自建 HTTP 服务，不依赖 DSH\nplatform = x86\nsource = thirdparty\nmaintainer = FN AIO\ndistributor = FN AIO\ndesktop_uidir = ui\ndesktop_applaunchname = aio.main\ncheckport = false\n`);
 await put('config/privilege',JSON.stringify({defaults:{'run-as':'package'}},null,2));
 await put('config/resource','{}\n');
 await put('app/ui/config',JSON.stringify({'.url':{'aio.main':{title:'AIO',icon:'images/icon_{0}.png',type:'url',protocol:'',gatewayPrefix:'/app/aio',gatewaySocket:'app.sock',url:'/app/aio/',allUsers:false}}},null,2));
 await put('app/gateway.json',JSON.stringify(policy,null,2));
-for(const file of ['bridge.mjs','store.mjs','proxy.mjs'])await copyFile(join(root,'src',file),join(stage,'app',file));
+for(const file of ['bridge.mjs','store.mjs','proxy.mjs','token-logs.mjs'])await copyFile(join(root,'src',file),join(stage,'app',file));
 for(const file of ['index.html','style.css'])await copyFile(join(root,'src/web',file),join(stage,'app/web',file));
 await put('app/web/app.js',configureWebScript(await readFile(join(root,'src/web/app.js'),'utf8'),policy.defaultOrigin));
 await copyFile(join(root,'scripts/control.py'),join(stage,'app/control.py'));

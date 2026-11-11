@@ -6,6 +6,7 @@ import {resolve,join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {Store,validatePolicy,authority,fail} from './store.mjs';
 import {ROOT,parseTarget,mount,destination,createProxy} from './proxy.mjs';
+import {tokenSources,readLatestToken} from './token-logs.mjs';
 
 const CSP="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'self'; base-uri 'self'; frame-ancestors 'self'";
 function localIpOrigins(policy){
@@ -92,6 +93,7 @@ function reject(res,error){
 }
 export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web/',import.meta.url)}={}){
   const policy=validatePolicy(input),store=await new Store(dataFile,policy).init(),proxy=createProxy(),sockets=new Set();
+  let readingTokens=false;
   const assets=new Map();
   for(const [path,file,type] of [[ROOT+'/','index.html','text/html; charset=utf-8'],[ROOT+'/assets/app.js','app.js','text/javascript; charset=utf-8'],[ROOT+'/assets/style.css','style.css','text/css; charset=utf-8']]){
     const source=assetsRoot instanceof URL?new URL(file,assetsRoot):join(assetsRoot,file);
@@ -102,13 +104,36 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
     if(target.pathname===ROOT){res.writeHead(308,{location:ROOT+'/','cache-control':'no-store'});res.end();return;}
     if(target.pathname===ROOT+'/api/health'){
       if(!['GET','HEAD'].includes(req.method))throw fail('方法不支持',405);
-      json(res,{name:'AIO',version:'0.2.5',privateOnly:!policy.publicProxy});return;
+      json(res,{name:'AIO',version:'0.2.6',privateOnly:!policy.publicProxy});return;
     }
     if(target.pathname===ROOT+'/api/services'){
       apiAdmission(req,context);
       if(req.method==='GET'){json(res,{...store.get(),policy:{targetHosts:[...policy.targetHosts],defaultOrigin:policy.defaultOrigin,publicOrigin:policy.publicProxy?.origin??null}});return;}
       if(req.method==='PUT'){json(res,await store.save(await jsonBody(req)));return;}
       throw fail('方法不支持',405);
+    }
+    if(target.pathname===ROOT+'/api/tokens'||target.pathname.startsWith(ROOT+'/api/tokens/')){
+      apiAdmission(req,context);
+      if(target.search)throw fail('token 接口不接受查询参数');
+      const sources=tokenSources(policy.tokenLogs),id=target.pathname.slice((ROOT+'/api/tokens/').length);
+      const listing=target.pathname===ROOT+'/api/tokens';
+      if(listing?req.method!=='GET':req.method!=='POST')throw fail('方法不支持',405);
+      const source=sources.find(item=>item.id===id);
+      if(!listing&&!source)throw fail('未配置此 token 日志来源',404);
+      if(!listing)await jsonBody(req);
+      if(readingTokens)throw fail('正在读取 token 日志，请稍后再试',429);
+      readingTokens=true;
+      try{
+        if(listing){
+          const result=[];
+          for(const item of sources){
+            try{const {timestamp}=await readLatestToken(policy.tokenLogs[item.id]);result.push({...item,available:true,timestamp});}
+            catch(error){result.push({...item,available:false,message:error.message});}
+          }
+          json(res,{sources:result});
+        }else json(res,{...source,...await readLatestToken(policy.tokenLogs[id])});
+      }finally{readingTokens=false;}
+      return;
     }
     const check=/^\/app\/aio\/api\/services\/([a-z][a-z0-9-]{0,31})\/check$/.exec(target.pathname);
     if(check){
