@@ -93,6 +93,14 @@ test('管理 API 需要请求标记、写入 Origin 和 JSON，配置超限拒�
   assert.equal((await f.api('GET','services')).value.revision,0);
 });
 
+test('管理服务接口返回策略默认入口，不以当前访问来源替代',async t=>{
+  const f=await fixture(t);
+  const result=await f.api('GET','services',undefined,{host:'127.0.0.1:5666',origin:'http://127.0.0.1:5666'});
+  assert.equal(result.status,200);
+  assert.equal(result.value.policy.defaultOrigin,policy.defaultOrigin);
+  assert.equal(result.value.policy.publicOrigin,null);
+});
+
 test('配置增删改持久化、私有权限和前一版本备份',async t=>{
   const f=await fixture(t);assert.equal((await f.save()).status,200);
   assert.equal((await f.api('GET','services')).value.services[0].id,'notes');

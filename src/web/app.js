@@ -3,6 +3,8 @@ const $=id=>document.getElementById(id);
 let state={revision:0,services:[],policy:{targetHosts:[]}},editing=null,busy=false,ready=false;
 const checks=new Map(),controllers=new Set();
 const root=new URL('./',document.baseURI);
+// The FPK builder replaces this value using the validated deployment policy.
+const packagedDefaultOrigin=null;
 function element(tag,props={},children=[]){const node=document.createElement(tag);for(const [key,value]of Object.entries(props)){if(key==='className')node.className=value;else if(key==='text')node.textContent=value;else if(key==='onClick')node.addEventListener('click',value);else node.setAttribute(key,value);}for(const child of children)node.append(child);return node;}
 function message(text,error=false){$('message').textContent=text;$('message').dataset.error=String(error);$('message').hidden=!text;$('message').setAttribute('role',error?'alert':'status');}
 function updateBusy(){document.querySelectorAll('button').forEach(button=>button.disabled=busy);$('fields').disabled=busy;$('import').disabled=busy||!ready;$('export').disabled=busy||!ready;$('add').disabled=busy||!ready;}
@@ -15,7 +17,16 @@ async function api(path,method='GET',body){
     if(!response.ok)throw new Error(value.error||'操作失败');return value;
   }finally{clearTimeout(timer);controllers.delete(controller);}
 }
-function entry(service){return new URL('s/'+encodeURIComponent(service.id)+'/',root).href;}
+function entry(service){
+  for(const value of [state.policy?.defaultOrigin,packagedDefaultOrigin]){
+    try{
+      const origin=new URL(value);
+      if(!['http:','https:'].includes(origin.protocol)||origin.origin!==value)continue;
+      return new URL('/app/aio/s/'+encodeURIComponent(service.id)+'/',origin).href;
+    }catch{/* Try the packaged policy if an older API omits the default origin. */}
+  }
+  return null;
+}
 function render(){
   const container=$('services');container.replaceChildren();$('count').textContent=state.services.length+' / 50';
   $('loading').hidden=true;
@@ -23,8 +34,11 @@ function render(){
   for(const service of state.services){
     const heading=element('div',{className:'card-top'},[element('h3',{text:service.name}),element('span',{className:'badge'+(service.enabled?'':' off'),text:service.enabled?'已启用':'已停用'})]);
     const target=`http://${service.host.includes(':')?'['+service.host+']':service.host}:${service.port}${service.basePath}`;
-    const actions=element('div',{className:'actions'});
-    if(service.enabled)actions.append(element('a',{className:'open',href:entry(service),target:'_blank',rel:'noopener noreferrer',text:'打开服务'}));
+    const access=element('div',{className:'card-access'});
+    const privateUrl=entry(service);
+    if(service.enabled&&privateUrl)access.append(element('a',{className:'open',href:privateUrl,target:'_blank',rel:'noopener noreferrer',text:'飞牛私有入口'}));
+    else access.append(element('span',{className:'access-disabled',text:service.enabled?'默认飞牛入口不可用':'服务已停用，启用后可访问'}));
+    const actions=element('div',{className:'card-actions','aria-label':service.name+'的管理操作'});
     const check=element('button',{type:'button',text:'检查连接',onClick:()=>run(async()=>{const result=await api('services/'+service.id+'/check','POST',{});checks.set(service.id,result);render();})});
     actions.append(check,element('button',{type:'button',text:'编辑',onClick:()=>edit(service)}),element('button',{type:'button',text:service.enabled?'停用':'启用',onClick:()=>run(async()=>{
       if(service.enabled&&!confirm('停用只阻止新的访问，不停止后端服务；已建立连接可能继续。确定停用？'))return;
@@ -33,14 +47,22 @@ function render(){
       if(!confirm('仅删除 AIO 转发配置，不会删除文件或停止后端服务。确定删除？'))return;
       await save(state.services.filter(item=>item.id!==service.id));if(editing===service.id)cancel();message('服务配置已删除。');
     })}));
-    const card=element('article',{className:'card'},[heading,...(service.note?[element('p',{className:'service-note',text:service.note})]:[]),element('p',{text:'目标：'+target}),element('p',{className:'address',text:'入口：'+entry(service)}),actions]);
+    const addresses=element('dl',{className:'entry-addresses'},[
+      element('div',{},[element('dt',{text:'飞牛私有入口'}),element('dd',{className:'address',text:privateUrl??'接口未返回有效的默认飞牛地址，请重启 AIO 后刷新。'})]),
+    ]);
+    const details=element('details',{className:'entry-details'},[
+      element('summary',{text:'入口地址与说明'}),addresses,
+      element('p',{text:'私有入口固定使用管理员配置的默认飞牛地址，需要在该入口登录飞牛；不随当前页面域名或 IP 改变。'}),
+    ]);
+    const card=element('article',{className:'card'},[heading,element('p',{className:'service-target',text:'本机目标 · '+target}),...(service.note?[element('p',{className:'service-note',text:service.note})]:[])]);
     if(service.publicAccess){
       if(state.policy.publicOrigin&&service.enabled){
         const url=state.policy.publicOrigin+'/'+encodeURIComponent(service.id)+'/';
-        card.append(element('p',{className:'address',text:'外部入口：'+url}));
-        actions.append(element('a',{className:'open',href:url,target:'_blank',rel:'noopener noreferrer',text:'打开外部入口'}));
+        addresses.append(element('div',{},[element('dt',{text:'外部入口 · 业务自身登录'}),element('dd',{className:'address',text:url})]));
+        access.append(element('a',{className:'open external',href:url,target:'_blank',rel:'noopener noreferrer',text:'外部入口 ↗'}));
       }else card.append(element('p',{className:'result',text:service.enabled?'外部访问已授权，但管理员尚未配置业务入口策略。':'外部访问已授权，服务停用期间不可访问。'}));
     }
+    card.append(access,actions,details);
     const result=checks.get(service.id);if(result)card.append(element('p',{className:'result','data-ok':String(result.reachable),role:'status',text:result.message}));container.append(card);
   }updateBusy();
 }

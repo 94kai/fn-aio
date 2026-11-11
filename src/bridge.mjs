@@ -102,11 +102,11 @@ export async function createApp({policy:input,dataFile,assetsRoot=new URL('./web
     if(target.pathname===ROOT){res.writeHead(308,{location:ROOT+'/','cache-control':'no-store'});res.end();return;}
     if(target.pathname===ROOT+'/api/health'){
       if(!['GET','HEAD'].includes(req.method))throw fail('方法不支持',405);
-      json(res,{name:'AIO',version:'0.2.2',privateOnly:!policy.publicProxy});return;
+      json(res,{name:'AIO',version:'0.2.5',privateOnly:!policy.publicProxy});return;
     }
     if(target.pathname===ROOT+'/api/services'){
       apiAdmission(req,context);
-      if(req.method==='GET'){json(res,{...store.get(),policy:{targetHosts:[...policy.targetHosts],publicOrigin:policy.publicProxy?.origin??null}});return;}
+      if(req.method==='GET'){json(res,{...store.get(),policy:{targetHosts:[...policy.targetHosts],defaultOrigin:policy.defaultOrigin,publicOrigin:policy.publicProxy?.origin??null}});return;}
       if(req.method==='PUT'){json(res,await store.save(await jsonBody(req)));return;}
       throw fail('方法不支持',405);
     }

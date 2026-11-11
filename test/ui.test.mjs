@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+import {configureWebScript} from '../scripts/web-config.mjs';
 const html=await readFile(new URL('../src/web/index.html',import.meta.url),'utf8');
 const js=await readFile(new URL('../src/web/app.js',import.meta.url),'utf8');
 const css=await readFile(new URL('../src/web/style.css',import.meta.url),'utf8');
@@ -39,6 +41,69 @@ test('外部访问默认关闭、单独授权，链接使用业务入口并在�
   assert.match(js,/confirm\('允许外部访问后/);
   assert.match(js,/state\.policy\.publicOrigin/);
   assert.match(js,/await save\(value\.services\)/);
+});
+
+test('卡片访问与管理操作分区，完整地址折叠且窄屏不挤压按钮',()=>{
+  assert.match(js,/className:'card-access'/);
+  assert.match(js,/className:'card-actions'/);
+  assert.match(js,/element\('details',\{className:'entry-details'\}/);
+  assert.match(js,/element\('summary',\{text:'入口地址与说明'\}/);
+  assert.match(css,/\.card-actions\{display:grid;grid-template-columns:repeat\(4,minmax\(0,1fr\)\)/);
+  assert.match(css,/minmax\(min\(100%,340px\),1fr\)/);
+  assert.doesNotMatch(css,/\.card \.actions>\*/);
+});
+
+test('私有入口固定使用策略默认地址，管理 API 仍跟随当前页面',()=>{
+  const setup=js.slice(0,js.indexOf('function render()'));
+  for(const origin of ['https://office.example:39801','https://device.fnos.net','https://[2001:db8::1]:1024']){
+    for(const defaultOrigin of ['https://configured.fnos.net','https://nas.example:1024']){
+      const context=vm.createContext({URL,document:{baseURI:origin+'/app/aio/'}});
+      vm.runInContext(setup,context);
+      vm.runInContext('state.policy.defaultOrigin='+JSON.stringify(defaultOrigin),context);
+      assert.equal(vm.runInContext("entry({id:'notes'})",context),defaultOrigin+'/app/aio/s/notes/');
+      assert.equal(vm.runInContext("new URL('api/services',root).href",context),origin+'/app/aio/api/services');
+    }
+  }
+  assert.match(js,/私有入口固定使用管理员配置的默认飞牛地址/);
+  assert.match(js,/const packagedDefaultOrigin=null;/);
+  assert.doesNotMatch(js,/https?:\/\/[^'"\s]*\.fnos\.net/);
+});
+
+test('旧接口缺少默认入口或返回无效值时仍渲染卡片，不回退到当前域名',()=>{
+  class Node{
+    constructor(tag){this.tag=tag;this.children=[];this.attributes={};}
+    append(...children){this.children.push(...children);}
+    replaceChildren(...children){this.children=children;}
+    setAttribute(key,value){this.attributes[key]=value;}
+    addEventListener(){}
+  }
+  for(const packaged of [false,true])for(const value of [undefined,null,'','invalid','javascript:alert(1)','https://user:pass@nas.example','https://nas.example/path']){
+    const source=packaged?configureWebScript(js,'https://configured.fnos.net'):js;
+    const nodes=new Map();
+    const document={baseURI:'https://office.example/app/aio/',createElement:tag=>new Node(tag),getElementById:id=>{if(!nodes.has(id))nodes.set(id,new Node(id));return nodes.get(id);},querySelectorAll:()=>[]};
+    const context=vm.createContext({URL,document});
+    vm.runInContext(source.slice(0,source.indexOf('async function load()')),context);
+    vm.runInContext('state='+JSON.stringify({services:[{id:'notes',name:'笔记',host:'127.0.0.1',port:8080,basePath:'/',enabled:true,publicAccess:true}],policy:{defaultOrigin:value,publicOrigin:'https://public.example:1025'}}),context);
+    assert.equal(vm.runInContext("entry({id:'notes'})",context),packaged?'https://configured.fnos.net/app/aio/s/notes/':null);
+    vm.runInContext('render()',context);
+    const card=nodes.get('services').children[0];
+    assert.equal(card.tag,'article');
+    const access=card.children.find(node=>node.className==='card-access');
+    if(packaged)assert.equal(access.children[0].attributes.href,'https://configured.fnos.net/app/aio/s/notes/');
+    else assert.equal(access.children[0].textContent,'默认飞牛入口不可用');
+    assert.equal(access.children[1].attributes.href,'https://public.example:1025/notes/');
+    assert.equal(card.children.find(node=>node.className==='card-actions').children.length,4);
+  }
+});
+
+test('打包默认入口只接受规范地址，配置标记缺失时拒绝生成',()=>{
+  for(const origin of ['javascript:alert(1)','https://user:pass@nas.example','https://nas.example/path'])assert.throws(()=>configureWebScript(js,origin));
+  assert.throws(()=>configureWebScript('','https://configured.fnos.net'));
+  const source=configureWebScript(js,'https://packaged.fnos.net');
+  const context=vm.createContext({URL,document:{baseURI:'https://office.example/app/aio/'}});
+  vm.runInContext(source.slice(0,source.indexOf('function render()')),context);
+  vm.runInContext("state.policy.defaultOrigin='https://runtime.fnos.net'",context);
+  assert.equal(vm.runInContext("entry({id:'notes'})",context),'https://runtime.fnos.net/app/aio/s/notes/');
 });
 
 test('手机和暗色采用局部样式，刷新/操作目标至少 44px，长地址可换行',()=>{
