@@ -15,8 +15,8 @@ android {
         applicationId 'top.fnaio.direct'
         minSdk 26
         targetSdk 35
-        versionCode 6
-        versionName '0.3.2'
+        versionCode 17
+        versionName '0.6.4'
         buildConfigField 'String', 'NAS_ORIGIN', '"' + nasOrigin + '"'
         buildConfigField 'String', 'DIRECT_URL', '"' + directUrl + '"'
     }
