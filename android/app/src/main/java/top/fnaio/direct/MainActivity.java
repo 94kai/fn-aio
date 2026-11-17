@@ -49,7 +49,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.json.JSONObject;
 
-public final class MainActivity extends Activity {
+public class MainActivity extends Activity {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private final List<WebView> popups = new ArrayList<>();
@@ -293,9 +293,19 @@ public final class MainActivity extends Activity {
         if (recovering) { recoveryDeadline = SystemClock.elapsedRealtime() + RECOVERY_LIMIT_MS; scheduleProbe(1000); }
         if (web.getUrl() != null && route.allows(web.getUrl())) web.reload(); else openTarget();
     }
+
+    /** 工具箱桌面入口固定进入工具箱首页；默认入口固定不自动进入工具箱。 */
+    protected boolean toolboxEntry() { return false; }
+
+    /** DSH 入口地址追加固定参数，避免行为再被上次状态决定。 */
+    private String entryUrl() {
+        String url = route.entry();
+        return url + (url.indexOf('?') < 0 ? "?" : "&") + "toolbox=" + (toolboxEntry() ? "1" : "0");
+    }
+
     private void openTarget() {
         generation++; recovering = false; clearRecoveryHistory = false; handler.removeCallbacks(probeTask);
-        web.loadUrl(route.entry());
+        web.loadUrl(entryUrl());
     }
     private void beginRecovery() {
         if (route == null || !route.requiresNasLogin() || recovering) return;

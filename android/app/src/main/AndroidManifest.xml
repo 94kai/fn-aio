@@ -19,6 +19,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity tools:ignore="UnusedAttribute" android:name=".ToolboxActivity" android:exported="true" android:launchMode="singleTask" android:taskAffinity="top.fnaio.direct.toolbox" android:label="工具箱" android:icon="@drawable/ic_toolbox" android:roundIcon="@drawable/ic_toolbox" android:windowSoftInputMode="adjustResize" android:enableOnBackInvokedCallback="true" android:configChanges="orientation|screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
         <activity android:name=".QuickActivity" android:exported="true" android:launchMode="singleTask" android:taskAffinity="top.fnaio.direct.quick" android:label="快捷控制" android:icon="@drawable/ic_aio" android:roundIcon="@drawable/ic_aio" android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
