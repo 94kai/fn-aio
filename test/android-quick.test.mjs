@@ -49,6 +49,43 @@ test('快捷入口提供完整音乐播放器并保留受认证服务请求', as
   assert.doesNotMatch(code, /TextView title = text\("快捷控制", 26/);
 });
 
+test('语音聊天提供独立入口、会话选择、语音取消及认证 DSH RPC', async () => {
+  const manifest = await readFile(new URL('AndroidManifest.xml', root), 'utf8');
+  const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
+  assert.match(manifest, /uses-permission android:name="android.permission.RECORD_AUDIO"/);
+  assert.match(manifest, /android:name="\.VoiceChatActivity"[^>]*android:exported="true"[^>]*android:launchMode="singleTask"[^>]*android:taskAffinity="top\.fnaio\.direct\.voice"/);
+  for (const endpoint of ['session/list', 'session/state', 'session/prompt', 'session/wait']) assert.ok(code.includes(endpoint), endpoint);
+  assert.doesNotMatch(code, /session\/page|refreshHistory/);
+  assert.match(code, /"voice-history:"\+base\+":"\+id/);
+  assert.match(code, /"afterSeq",fromSeq,"timeoutMs",20_000,"maxMessages",1/);
+  assert.match(code, /rpc\("session\/list",json\("_request",new JSONObject\(\)\)/);
+  assert.match(code, /json\("request",json\("sessionId",id\)/);
+  for (const action of ['按住说话', '松开发送', '松开取消', '拍照', '图片', '切换会话']) assert.ok(code.includes(action), action);
+  assert.match(code, /getCookie\(url\)/);
+  assert.match(code, /setInstanceFollowRedirects\(false\)/);
+  assert.match(code, /cancelSpeech/);
+  assert.match(code, /android\.webkit\.CookieManager/);
+});
+
+test('语音页本地先开、持久补收、严格游标与生命周期隔离', async () => {
+  const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
+  const create = code.slice(code.indexOf('@Override public void onCreate'), code.indexOf('private int dp'));
+  assert.match(create, /else loadLocalMessages\(\)/);
+  assert.doesNotMatch(create, /readCursor|session\/state|session\/wait/);
+  assert.doesNotMatch(code, /optLong\("cursor",-1\)|lastSeq|session\/page/);
+  assert.match(code, /VoiceReplyPolicy\.cursor\(state\.opt\("cursor"\)\)/);
+  assert.match(code, /VoiceReplyPolicy\.eligible\(ev\.optString\("type"\),seq,fromSeq\)/);
+  assert.match(code, /VoiceReplyPolicy\.ready/);
+  assert.match(code, /putString\(pendingKey\(id\),p\.toString\(\)\)\.commit\(\)[\s\S]*?rpc\("session\/prompt"/);
+  assert.match(code, /putString\(historyKey\(id\),boundedHistory\(saved\)\)\.remove\(pendingKey\(id\)\)\.commit/);
+  assert.match(code, /onStart\(\)[^\n]*resumePending\(\)/);
+  assert.match(code, /onStop\(\)[^\n]*waitGeneration\+\+/);
+  assert.match(code, /foreground&&ticket==waitGeneration/);
+  assert.match(code, /"voice-pending:"\+base\+":"\+id/);
+  assert.match(code, /"session\/wait"\.equals\(method\)\?waits:io/);
+  assert.match(code, /ACTION_CANCEL\)cancelSpeech=true/);
+});
+
 test('快捷页自动刷新，音乐列表弹窗可滚动并按音箱隔离', async () => {
   const code = await readFile(new URL('java/top/fnaio/direct/QuickActivity.java', root), 'utf8');
   assert.match(code, /page\.post\(\(\) -> \{ entered = true; autoRefresh\(true\); \}\)/);
