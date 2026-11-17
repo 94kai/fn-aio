@@ -1,20 +1,14 @@
 package top.fnaio.direct;
 
-import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
-import android.speech.RecognitionListener;
-import android.speech.RecognizerIntent;
-import android.speech.SpeechRecognizer;
 import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.Button;
@@ -24,6 +18,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import android.widget.ImageView;
+import android.widget.HorizontalScrollView;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import java.util.ArrayList;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -43,18 +42,21 @@ public final class VoiceChatActivity extends Activity {
     private final android.os.Handler handler=new android.os.Handler(android.os.Looper.getMainLooper());
     private volatile HttpURLConnection waitConnection;
     private boolean foreground=false, preparing=false;
-    private int waitGeneration=0, speechGeneration=0;
+    private int waitGeneration=0;
     private SharedPreferences prefs;
     private String base="", sessionId="";
     private LinearLayout messages;
     private TextView sessionLabel, hint;
     private EditText composer;
-    private SpeechRecognizer recognizer;
-    private boolean textMode=false, cancelSpeech=false, recording=false;
     private Button sendButton;
-    private String pendingSpeech="";
-    private boolean speechReleased=false;
     private int epoch=0;
+    private static final int MAX_PENDING_IMAGES=6;
+    private final ArrayList<byte[]> pendingImages=new ArrayList<>();
+    private LinearLayout attachmentStrip;
+    private HorizontalScrollView attachmentScroll;
+    private final ExecutorService imageIo=Executors.newSingleThreadExecutor();
+    private int importing=0;
+
 
 
     @Override public void onCreate(Bundle state) {
@@ -63,7 +65,10 @@ public final class VoiceChatActivity extends Activity {
         base=prefs.getString(prefs.getBoolean("use_public",false)?"public_url":"lan","");
         sessionId=prefs.getString("voice-session:"+base,"");
         build();
-        if(!sessionId.isEmpty())sessionLabel.setText("会话 · "+sessionId.substring(0,Math.min(8,sessionId.length())));
+        if(!sessionId.isEmpty())sessionLabel.setText(prefs.getString("chat-title:"+base+":"+sessionId,"聊天")+" ▾");
+        restoreDraft(state);
+        java.io.File[] oldDrafts=getCacheDir().listFiles((dir,name)->name.startsWith("chat-draft-")&&name.endsWith(".jpg"));
+        if(oldDrafts!=null)for(java.io.File file:oldDrafts)if(System.currentTimeMillis()-file.lastModified()>24*60*60*1000L)file.delete();
         if(base.isEmpty()){ hint.setText("请先在快捷控制入口设置 DSH 服务地址"); return; }
         if(sessionId.isEmpty()) chooseSession(); else loadLocalMessages();
     }
@@ -71,31 +76,45 @@ public final class VoiceChatActivity extends Activity {
     private TextView label(String s,int size,int color){TextView t=new TextView(this);t.setText(s);t.setTextSize(size);t.setTextColor(color);t.setIncludeFontPadding(false);return t;}
     private android.graphics.drawable.GradientDrawable bg(int color,int r){android.graphics.drawable.GradientDrawable d=new android.graphics.drawable.GradientDrawable();d.setColor(color);d.setCornerRadius(dp(r));return d;}
     private void build(){
+        getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(Color.WHITE);
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setPadding(dp(16),dp(10),dp(16),dp(12));root.setBackgroundColor(BG);
         root.setOnApplyWindowInsetsListener((v,i)->{if(android.os.Build.VERSION.SDK_INT>=30){android.graphics.Insets x=i.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.ime());v.setPadding(dp(16)+x.left,dp(10)+x.top,dp(16)+x.right,dp(12)+x.bottom);}return i;});
         LinearLayout top=new LinearLayout(this);top.setGravity(Gravity.CENTER_VERTICAL);
-        Button picker=button("切换会话",false);picker.setOnClickListener(v->chooseSession());top.addView(picker);
-        sessionLabel=label("选择会话",17,INK);sessionLabel.setTypeface(null,Typeface.BOLD);sessionLabel.setGravity(Gravity.CENTER);top.addView(sessionLabel,new LinearLayout.LayoutParams(0,dp(48),1));
-        Button reload=button("补收",false);reload.setOnClickListener(v->resumePending());reload.setOnLongClickListener(v->{managePending();return true;});top.addView(reload);root.addView(top);
-        hint=label("消息仅显示本次发送和最终回复",12,MUTED);hint.setPadding(dp(4),dp(2),0,dp(8));root.addView(hint);
-        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);messages=new LinearLayout(this);messages.setOrientation(LinearLayout.VERTICAL);messages.setPadding(0,dp(6),0,dp(8));sc.addView(messages);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
-        composer=new EditText(this);composer.setTextSize(16);composer.setTextColor(INK);composer.setHint("输入消息");composer.setMinHeight(dp(52));composer.setPadding(dp(14),dp(10),dp(14),dp(10));composer.setBackground(bg(Color.WHITE,16));composer.setVisibility(View.GONE);root.addView(composer);
-        LinearLayout tools=new LinearLayout(this);tools.setGravity(Gravity.CENTER_VERTICAL);tools.setPadding(0,dp(9),0,0);
-        Button camera=button("拍照",false);camera.setOnClickListener(v->takePhoto());tools.addView(camera,new LinearLayout.LayoutParams(0,dp(48),1));
-        Button image=button("图片",false);image.setOnClickListener(v->pickImage());LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(0,dp(48),1);ip.setMargins(dp(6),0,dp(6),0);tools.addView(image,ip);
-        Button switcher=button("打字",false);switcher.setOnClickListener(v->{textMode=!textMode;composer.setVisibility(textMode?View.VISIBLE:View.GONE);sendButton.setVisibility(textMode?View.VISIBLE:View.GONE);switcher.setText(textMode?"语音":"打字");});tools.addView(switcher,new LinearLayout.LayoutParams(0,dp(48),1));
-        FrameLayout mic=new FrameLayout(this);mic.setBackground(bg(TEAL,16));TextView mt=label("按住说话",16,Color.WHITE);mt.setGravity(Gravity.CENTER);mt.setTypeface(null,Typeface.BOLD);mic.addView(mt,new FrameLayout.LayoutParams(-1,-1));
-        mic.setOnTouchListener((v,e)->{switch(e.getAction()){case MotionEvent.ACTION_DOWN:cancelSpeech=false;startSpeech();mt.setText(recording?"松开发送":"按住说话");return true;case MotionEvent.ACTION_MOVE:if(e.getY() < -dp(65)){cancelSpeech=true;mt.setText("松开取消");}else if(!cancelSpeech)mt.setText("松开发送");return true;case MotionEvent.ACTION_UP:case MotionEvent.ACTION_CANCEL:if(e.getAction()==MotionEvent.ACTION_CANCEL)cancelSpeech=true;speechReleased=true;if(recording){recording=false;if(recognizer!=null)recognizer.stopListening();}if(cancelSpeech){pendingSpeech="";}else if(!pendingSpeech.isEmpty()){composer.setText(pendingSpeech);sendPrompt(pendingSpeech,null);pendingSpeech="";}mt.setText("按住说话");return true;}return true;});
-        LinearLayout.LayoutParams mp=new LinearLayout.LayoutParams(0,dp(54),2);mp.setMargins(dp(6),0,0,0);tools.addView(mic,mp);root.addView(tools);
-        sendButton=button("发送文字",true);sendButton.setOnClickListener(v->sendText());LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(46));sp.setMargins(0,dp(8),0,0);sendButton.setVisibility(View.GONE);root.addView(sendButton,sp);
-        composer.setOnFocusChangeListener((v,focus)->sendButton.setVisibility(textMode?View.VISIBLE:View.GONE));
-        composer.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int before,int count){sendButton.setVisibility(textMode?View.VISIBLE:View.GONE);}public void afterTextChanged(android.text.Editable e){}});
+        sessionLabel=label("选择会话 ▾",18,INK);sessionLabel.setTypeface(null,Typeface.BOLD);sessionLabel.setSingleLine(true);sessionLabel.setEllipsize(android.text.TextUtils.TruncateAt.END);sessionLabel.setGravity(Gravity.CENTER_VERTICAL);sessionLabel.setContentDescription("切换会话");sessionLabel.setOnClickListener(v->chooseSession());top.addView(sessionLabel,new LinearLayout.LayoutParams(0,dp(48),1));
+        Button reload=button("补收",false);reload.setOnClickListener(v->resumePending());reload.setOnLongClickListener(v->{managePending();return true;});top.addView(reload,new LinearLayout.LayoutParams(dp(64),dp(44)));root.addView(top);
+        hint=label("只在点击发送后提交文字和图片",12,MUTED);hint.setPadding(0,dp(2),0,dp(8));root.addView(hint);
+        ScrollView sc=new ScrollView(this);sc.setFillViewport(true);sc.setClipToPadding(false);messages=new LinearLayout(this);messages.setOrientation(LinearLayout.VERTICAL);messages.setPadding(0,dp(12),0,dp(12));sc.addView(messages);root.addView(sc,new LinearLayout.LayoutParams(-1,0,1));
+        LinearLayout panel=new LinearLayout(this);panel.setOrientation(LinearLayout.VERTICAL);panel.setPadding(dp(10),dp(10),dp(10),dp(8));panel.setBackground(bg(Color.WHITE,20));root.addView(panel);
+        attachmentScroll=new HorizontalScrollView(this);attachmentScroll.setHorizontalScrollBarEnabled(false);attachmentStrip=new LinearLayout(this);attachmentScroll.addView(attachmentStrip);attachmentScroll.setVisibility(View.GONE);panel.addView(attachmentScroll,new LinearLayout.LayoutParams(-1,dp(88)));
+        composer=new EditText(this);composer.setTextSize(16);composer.setTextColor(INK);composer.setHintTextColor(MUTED);composer.setHint("写点什么，也可以添加图片…");composer.setMinHeight(dp(48));composer.setMaxLines(5);composer.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE|android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);composer.setPadding(dp(4),dp(10),dp(4),dp(10));composer.setBackgroundColor(Color.TRANSPARENT);panel.addView(composer);
+        LinearLayout tools=new LinearLayout(this);tools.setGravity(Gravity.CENTER_VERTICAL);
+        Button camera=button("拍照",false);camera.setOnClickListener(v->takePhoto());tools.addView(camera,new LinearLayout.LayoutParams(dp(64),dp(44)));
+        Button image=button("图片",false);image.setOnClickListener(v->pickImage());tools.addView(image,new LinearLayout.LayoutParams(dp(64),dp(44)));
+        tools.addView(new View(this),new LinearLayout.LayoutParams(0,1,1));
+        sendButton=button("发送 ↑",true);sendButton.setOnClickListener(v->sendText());tools.addView(sendButton,new LinearLayout.LayoutParams(dp(80),dp(44)));panel.addView(tools);
         root.setFocusableInTouchMode(true);setContentView(root);
     }
-    private Button button(String text,boolean filled){Button b=new Button(this);b.setText(text);b.setTextSize(13);b.setAllCaps(false);b.setTextColor(filled?Color.WHITE:INK);b.setBackground(bg(filled?TEAL:Color.WHITE,14));b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(dp(8),0,dp(8),0);return b;}
+    private Button button(String text,boolean filled){Button b=new Button(this);b.setText(text);b.setTextSize(14);b.setAllCaps(false);b.setTextColor(filled?Color.WHITE:TEAL);b.setBackground(bg(filled?TEAL:Color.TRANSPARENT,14));b.setElevation(0);b.setStateListAnimator(null);b.setMinWidth(0);b.setMinimumWidth(0);b.setMinHeight(0);b.setMinimumHeight(0);b.setPadding(dp(8),0,dp(8),0);return b;}
+    private String cleanTitle(String text){return text==null||text.trim().equalsIgnoreCase("null")?"":text.trim();}
     private void chooseSession(){
         if(base.isEmpty())return; hint.setText("正在读取会话…");int ticket=++epoch;
-        rpc("session/list",json("_request",new JSONObject()),result->{if(ticket!=epoch)return;JSONArray items=result.optJSONArray("items");if(items==null||items.length()==0){hint.setText("当前账号没有可用会话");return;}String[] names=new String[items.length()];String[] ids=new String[items.length()];for(int i=0;i<items.length();i++){JSONObject s=items.optJSONObject(i);ids[i]=s==null?"":s.optString("sessionId");JSONObject projections=s==null?null:s.optJSONObject("projections");JSONObject values=projections==null?null:projections.optJSONObject("values");String title=values==null?"":values.optString("title","");if(title.isEmpty())title=s==null?ids[i]:s.optString("cwd",ids[i]);names[i]=title+"  ·  "+ids[i].substring(0,Math.min(8,ids[i].length()));}new AlertDialog.Builder(this).setTitle("选择 DSH 会话").setItems(names,(d,which)->{waitGeneration++;if(waitConnection!=null)waitConnection.disconnect();sessionId=ids[which];prefs.edit().putString("voice-session:"+base,sessionId).apply();sessionLabel.setText(names[which].split("  ·  ")[0]);loadLocalMessages();resumePending();}).setNegativeButton("取消",null).show();},e->hint.setText(e));
+        rpc("session/list",json("_request",new JSONObject()),result->{if(ticket!=epoch)return;JSONArray items=result.optJSONArray("items");if(items==null||items.length()==0){hint.setText("当前账号没有可用会话");return;}String[] names=new String[items.length()];String[] ids=new String[items.length()];for(int i=0;i<items.length();i++){JSONObject s=items.optJSONObject(i);ids[i]=s==null?"":cleanTitle(s.optString("sessionId"));JSONObject projections=s==null?null:s.optJSONObject("projections");JSONObject values=projections==null?null:projections.optJSONObject("values");String title=values==null?"":cleanTitle(values.optString("title",""));if(title.isEmpty())title=s==null?ids[i]:cleanTitle(s.optString("cwd",ids[i]));if(title.isEmpty())title="未命名会话";String shortId=ids[i].replaceFirst("^session-", "");names[i]=title+"  ·  "+shortId.substring(0,Math.min(8,shortId.length()));}hint.setText("选择要继续记录的对话");showSessionPicker(names,ids);},e->hint.setText(e));
+    }
+    private void showSessionPicker(String[] titles,String[] ids){
+        LinearLayout body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(dp(12),0,dp(12),0);
+        ScrollView scroll=new ScrollView(this);scroll.addView(body);AlertDialog dialog=new AlertDialog.Builder(this).setTitle("选择会话").setView(scroll).setNegativeButton("取消",null).create();
+        for(int i=0;i<titles.length;i++){final int index=i;String[] parts=titles[i].split("  ·  ",2);LinearLayout item=new LinearLayout(this);item.setOrientation(LinearLayout.VERTICAL);item.setPadding(dp(12),dp(12),dp(12),dp(12));item.setMinimumHeight(dp(64));item.setBackground(bg(ids[i].equals(sessionId)?0xFFDDEFEA:Color.TRANSPARENT,12));TextView title=label(parts[0],15,INK);title.setMaxLines(2);title.setEllipsize(android.text.TextUtils.TruncateAt.END);item.addView(title);if(parts.length>1){TextView subtitle=label(parts[1],11,MUTED);subtitle.setPadding(0,dp(4),0,0);item.addView(subtitle);}item.setOnClickListener(v->{if(ids[index].isEmpty())return;waitGeneration++;if(waitConnection!=null)waitConnection.disconnect();sessionId=ids[index];String name=titles[index].split("  ·  ",2)[0];prefs.edit().putString("voice-session:"+base,sessionId).putString("chat-title:"+base+":"+sessionId,name).apply();sessionLabel.setText(name+" ▾");loadLocalMessages();resumePending();dialog.dismiss();});body.addView(item);}
+        dialog.show();scroll.getLayoutParams().height=Math.min(dp(480),(int)(getResources().getDisplayMetrics().heightPixels*.6));scroll.requestLayout();
+    }
+    @Override protected void onSaveInstanceState(Bundle state){
+        super.onSaveInstanceState(state);state.putString("chat-text",composer.getText().toString());ArrayList<String> files=new ArrayList<>();
+        for(byte[] image:pendingImages)try{java.io.File file=java.io.File.createTempFile("chat-draft-",".jpg",getCacheDir());try(java.io.FileOutputStream out=new java.io.FileOutputStream(file)){out.write(image);}files.add(file.getName());}catch(Exception ignored){}
+        state.putStringArrayList("chat-images",files);
+    }
+    private void restoreDraft(Bundle state){
+        if(state==null)return;composer.setText(state.getString("chat-text",""));ArrayList<String> files=state.getStringArrayList("chat-images");if(files==null)return;
+        for(String name:files)try{if(!name.matches("chat-draft-[A-Za-z0-9-]+\\.jpg")||pendingImages.size()>=MAX_PENDING_IMAGES)continue;java.io.File file=new java.io.File(getCacheDir(),name);if(file.length()>6*1024*1024)continue;try(InputStream in=new java.io.FileInputStream(file)){pendingImages.add(encodeImage(BitmapFactory.decodeStream(in)));}file.delete();}catch(Exception ignored){}renderAttachments();
     }
     private JSONObject json(Object... pairs){JSONObject o=new JSONObject();try{for(int i=0;i+1<pairs.length;i+=2)o.put(String.valueOf(pairs[i]),pairs[i+1]);}catch(org.json.JSONException ignored){}return o;}
     private interface Success{void done(JSONObject data);} private interface Failure{void fail(String message);}
@@ -103,15 +122,21 @@ public final class VoiceChatActivity extends Activity {
     private String historyKey(String id){return "voice-history:"+base+":"+id;}
     private String pendingKey(String id){return "voice-pending:"+base+":"+id;}
     private JSONObject pending(String id){try{return new JSONObject(prefs.getString(pendingKey(id),"{}"));}catch(Exception e){return json("invalid",true);}}
-    private void loadLocalMessages(){messages.removeAllViews();if(sessionId.isEmpty())return;try{JSONArray saved=new JSONArray(prefs.getString(historyKey(sessionId),"[]"));for(int i=0;i<saved.length();i++){JSONObject entry=saved.optJSONObject(i);if(entry!=null)addBubble(entry.optString("text",""),entry.optBoolean("mine"));}}catch(Exception ignored){}hint.setText("仅显示此设备保存的本次聊天");}
+    private void loadLocalMessages(){messages.removeAllViews();if(sessionId.isEmpty())return;try{JSONArray saved=new JSONArray(prefs.getString(historyKey(sessionId),"[]"));for(int i=0;i<saved.length();i++){JSONObject entry=saved.optJSONObject(i);if(entry!=null)addBubble(entry.optString("text",""),entry.optBoolean("mine"),entry.optJSONArray("images"));}}catch(Exception ignored){}hint.setText("仅显示此设备保存的本次聊天");}
     private JSONArray localHistory(String id){try{return new JSONArray(prefs.getString(historyKey(id),"[]"));}catch(Exception e){return new JSONArray();}}
     private String boundedHistory(JSONArray saved){while(saved.length()>40||saved.toString().length()>1_000_000){if(saved.length()<=1)break;JSONArray trimmed=new JSONArray();for(int i=1;i<saved.length();i++)trimmed.put(saved.opt(i));saved=trimmed;}return saved.toString();}
-    private boolean persistAccepted(String id,JSONObject p){JSONArray saved=localHistory(id);if(!p.optBoolean("accepted"))saved.put(json("mine",true,"text",p.optString("text")));try{p.put("accepted",true);}catch(Exception ignored){}return prefs.edit().putString(historyKey(id),boundedHistory(saved)).putString(pendingKey(id),p.toString()).commit();}
-    private boolean finishPending(String id,JSONObject p,String reply){JSONArray saved=localHistory(id);if(!p.optBoolean("accepted"))saved.put(json("mine",true,"text",p.optString("text")));saved.put(json("mine",false,"text",reply));return prefs.edit().putString(historyKey(id),boundedHistory(saved)).remove(pendingKey(id)).commit();}
+    private boolean persistAccepted(String id,JSONObject p){JSONArray saved=localHistory(id);if(!p.optBoolean("accepted"))saved.put(json("mine",true,"text",p.optString("text"),"images",p.optJSONArray("images")));try{p.put("accepted",true);}catch(Exception ignored){}return prefs.edit().putString(historyKey(id),boundedHistory(saved)).putString(pendingKey(id),p.toString()).commit();}
+    private boolean finishPending(String id,JSONObject p,String reply){JSONArray saved=localHistory(id);if(!p.optBoolean("accepted"))saved.put(json("mine",true,"text",p.optString("text"),"images",p.optJSONArray("images")));saved.put(json("mine",false,"text",reply));return prefs.edit().putString(historyKey(id),boundedHistory(saved)).remove(pendingKey(id)).commit();}
     private String extractText(JSONArray content){if(content==null)return "";StringBuilder b=new StringBuilder();for(int i=0;i<content.length();i++){JSONObject block=content.optJSONObject(i);if(block!=null&&block.optString("type").equals("text")){if(b.length()>0)b.append('\n');b.append(block.optString("text"));}}return b.toString();}
-    private void addBubble(String value,boolean mine){TextView t=label(value,15,mine?Color.WHITE:INK);t.setPadding(dp(14),dp(11),dp(14),dp(11));t.setBackground(bg(mine?TEAL:Color.WHITE,16));LinearLayout row=new LinearLayout(this);row.setGravity(mine?Gravity.END:Gravity.START);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(5),0,dp(5));messages.addView(row,p);row.addView(t,new LinearLayout.LayoutParams((int)(getResources().getDisplayMetrics().widthPixels*.8),-2));((ScrollView)messages.getParent()).post(()->((ScrollView)messages.getParent()).fullScroll(View.FOCUS_DOWN));}
-    private void sendText(){String s=composer.getText().toString().trim();if(!s.isEmpty())sendPrompt(s,null);}
-    private void sendPrompt(String text,byte[] image){
+    private void addBubble(String value,boolean mine,JSONArray images){
+        LinearLayout bubble=new LinearLayout(this);bubble.setOrientation(LinearLayout.VERTICAL);bubble.setPadding(dp(12),dp(10),dp(12),dp(10));bubble.setBackground(bg(mine?0xFFDDEFEA:Color.WHITE,18));
+        int maxWidth=Math.min(dp(320),(int)(getResources().getDisplayMetrics().widthPixels*.78));
+        if(images!=null)for(int i=0;i<images.length();i++)try{byte[] bytes=android.util.Base64.decode(images.getString(i),android.util.Base64.NO_WRAP);Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);if(bitmap==null)continue;ImageView image=new ImageView(this);image.setImageBitmap(bitmap);image.setAdjustViewBounds(true);image.setMaxWidth(maxWidth-dp(24));image.setMaxHeight(dp(240));image.setScaleType(ImageView.ScaleType.FIT_CENTER);image.setContentDescription("已发送的图片 "+(i+1));LinearLayout.LayoutParams ip=new LinearLayout.LayoutParams(-2,-2);ip.bottomMargin=dp(6);bubble.addView(image,ip);}catch(Exception ignored){}
+        if(!value.isEmpty()){TextView t=label(value,16,INK);t.setMaxWidth(maxWidth-dp(24));t.setTextIsSelectable(true);t.setLineSpacing(dp(3),1);bubble.addView(t);}
+        LinearLayout row=new LinearLayout(this);row.setGravity(mine?Gravity.END:Gravity.START);LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,-2);p.setMargins(0,dp(5),0,dp(5));messages.addView(row,p);row.addView(bubble,new LinearLayout.LayoutParams(-2,-2));((ScrollView)messages.getParent()).post(()->((ScrollView)messages.getParent()).fullScroll(View.FOCUS_DOWN));
+    }
+    private void sendText(){String s=composer.getText().toString().trim();if(importing>0){hint.setText("图片处理中，请稍候再发送");return;}if(!s.isEmpty()||!pendingImages.isEmpty())sendPrompt(s,new ArrayList<>(pendingImages));}
+    private void sendPrompt(String text,ArrayList<byte[]> images){
         if(base.isEmpty()){hint.setText("请先在快捷控制入口设置服务地址");return;}
         if(sessionId.isEmpty()){chooseSession();return;}
         if(preparing||pending(sessionId).length()>0){hint.setText("上一条还未确认，请先补收；长按补收可处理待收记录");return;}
@@ -123,18 +148,19 @@ public final class VoiceChatActivity extends Activity {
                 JSONArray queue=state.optJSONArray("queue"), input=state.optJSONArray("pendingInput");
                 if(!state.has("running")||!state.has("queue")||input==null)throw new Exception("会话状态不完整，未发送");
                 if(!VoiceReplyPolicy.ready(state.optBoolean("running"),queue==null?0:queue.length(),input.length())){hint.setText("Agent 正忙或等待确认，请稍后再说；文字已保留");return;}
-                submitPrompt(id,text,image,fromSeq);
+                submitPrompt(id,text,images,fromSeq);
             }catch(Exception e){hint.setText(e.getMessage());}
         },e->{preparing=false;if(id.equals(sessionId))hint.setText("读取会话状态失败："+e);});
     }
-    private void submitPrompt(String id,String text,byte[] image,long fromSeq){
+    private void submitPrompt(String id,String text,ArrayList<byte[]> images,long fromSeq){
         try{
             JSONArray content=new JSONArray();
             if(text!=null&&!text.isEmpty())content.put(json("type","text","text",text));
-            if(image!=null)content.put(json("type","image","mediaType","image/jpeg","data",android.util.Base64.encodeToString(image,android.util.Base64.NO_WRAP),"name","voice-chat.jpg"));
-            String shown=text==null||text.isEmpty()?"[图片]":text+(image==null?"":"\n[图片]");
+            JSONArray thumbs=new JSONArray();
+            for(byte[] image:images){content.put(json("type","image","mediaType","image/jpeg","data",android.util.Base64.encodeToString(image,android.util.Base64.NO_WRAP),"name","chat-"+content.length()+".jpg"));thumbs.put(thumbnail(image));}
+            String shown=text==null?"":text;
             String rid=UUID.randomUUID().toString();
-            JSONObject p=json("requestId",rid,"afterSeq",fromSeq,"text",shown,"accepted",false);
+            JSONObject p=json("requestId",rid,"afterSeq",fromSeq,"text",shown,"images",thumbs,"accepted",false);
             // Commit BEFORE the HTTP request: a killed process must not forget an ambiguous submission.
             if(!prefs.edit().putString(pendingKey(id),p.toString()).commit()){hint.setText("无法保存待收状态，未发送");return;}
             rpc("session/prompt",json("request",json("requestId",rid,"sessionId",id,"mode","queue","content",content,"clientTimeZone",java.time.ZoneId.systemDefault().getId())),r->{
@@ -142,6 +168,7 @@ public final class VoiceChatActivity extends Activity {
                 boolean saved=persistAccepted(id,p);
                 if(!id.equals(sessionId))return;
                 if(text!=null&&text.equals(composer.getText().toString().trim()))composer.setText("");
+                for(byte[] sent:images)pendingImages.remove(sent);renderAttachments();
                 loadLocalMessages();hint.setText(saved?"已发送，可以退出；下次自动补收回复":"已发送，本地保存失败，请补收");
                 resumePending();
             },e->{if(id.equals(sessionId))hint.setText("发送结果未确认，未自动重发。点击补收或长按处理："+e);});
@@ -195,11 +222,43 @@ public final class VoiceChatActivity extends Activity {
         new AlertDialog.Builder(this).setTitle("处理待收记录").setMessage("清除仅停止本机补收，不撤回已发消息，也不会自动重发。发送结果不明确时，请先到 DSH 确认是否已记录，避免重复记录。")
             .setPositiveButton("继续补收",(d,w)->resumePending()).setNeutralButton("清除待收",(d,w)->{waitGeneration++;if(waitConnection!=null)waitConnection.disconnect();if(prefs.edit().remove(pendingKey(sessionId)).commit())hint.setText("已停止补收；服务端消息未删除");}).setNegativeButton("取消",null).show();
     }
-    private void startSpeech(){final int speechTicket=++speechGeneration;speechReleased=false;pendingSpeech="";if(!SpeechRecognizer.isRecognitionAvailable(this)){Toast.makeText(this,"此设备没有可用的语音识别服务",Toast.LENGTH_SHORT).show();return;}if(checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED){requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO},20);return;}if(recognizer!=null)recognizer.destroy();recognizer=SpeechRecognizer.createSpeechRecognizer(this);recognizer.setRecognitionListener(new RecognitionListener(){public void onReadyForSpeech(Bundle b){}public void onBeginningOfSpeech(){}public void onRmsChanged(float f){}public void onBufferReceived(byte[] b){}public void onEndOfSpeech(){}public void onError(int e){if(speechTicket!=speechGeneration)return;recording=false;hint.setText("语音识别未完成，请重试或切换打字");}public void onResults(Bundle b){if(speechTicket!=speechGeneration)return;recording=false;if(cancelSpeech)return;java.util.ArrayList<String> r=b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);if(r!=null&&!r.isEmpty()){pendingSpeech=r.get(0);if(speechReleased&&!cancelSpeech){composer.setText(pendingSpeech);sendPrompt(pendingSpeech,null);pendingSpeech="";}}}public void onPartialResults(Bundle b){}public void onEvent(int t,Bundle b){}});Intent i=new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);i.putExtra(RecognizerIntent.EXTRA_LANGUAGE,"zh-CN");recording=true;recognizer.startListening(i);}
-    private void pickImage(){Intent i=new Intent(Intent.ACTION_GET_CONTENT);i.setType("image/*");startActivityForResult(i,31);}
-    private void takePhoto(){Intent i=new Intent("android.media.action.IMAGE_CAPTURE");if(i.resolveActivity(getPackageManager())!=null)startActivityForResult(i,32);else Toast.makeText(this,"未找到相机应用",Toast.LENGTH_SHORT).show();}
-    @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(result!=RESULT_OK||data==null)return;try{android.graphics.Bitmap bitmap;if(request==31){try(InputStream in=getContentResolver().openInputStream(data.getData())){bitmap=android.graphics.BitmapFactory.decodeStream(in);}}else bitmap=(android.graphics.Bitmap)data.getExtras().get("data");if(bitmap==null)throw new Exception();int edge=Math.max(bitmap.getWidth(),bitmap.getHeight());if(edge>1600){float scale=1600f/edge;bitmap=android.graphics.Bitmap.createScaledBitmap(bitmap,Math.max(1,Math.round(bitmap.getWidth()*scale)),Math.max(1,Math.round(bitmap.getHeight()*scale)),true);}ByteArrayOutputStream out=new ByteArrayOutputStream();bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG,78,out);if(out.size()>6*1024*1024)throw new Exception("图片过大");sendPrompt("",out.toByteArray());}catch(Exception e){Toast.makeText(this,"无法读取所选图片",Toast.LENGTH_SHORT).show();}}
+    private String thumbnail(byte[] bytes){Bitmap bitmap=BitmapFactory.decodeByteArray(bytes,0,bytes.length);if(bitmap==null)return "";int edge=Math.max(bitmap.getWidth(),bitmap.getHeight());if(edge>480){float scale=480f/edge;Bitmap small=Bitmap.createScaledBitmap(bitmap,Math.max(1,Math.round(bitmap.getWidth()*scale)),Math.max(1,Math.round(bitmap.getHeight()*scale)),true);if(small!=bitmap)bitmap.recycle();bitmap=small;}ByteArrayOutputStream out=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,65,out);bitmap.recycle();return android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP);}
+    private void renderAttachments(){
+        attachmentStrip.removeAllViews();attachmentScroll.setVisibility(pendingImages.isEmpty()?View.GONE:View.VISIBLE);
+        for(int i=0;i<pendingImages.size();i++){final int index=i;FrameLayout tile=new FrameLayout(this);byte[] bytes=pendingImages.get(i);ImageView image=new ImageView(this);BitmapFactory.Options options=new BitmapFactory.Options();options.inSampleSize=4;image.setImageBitmap(BitmapFactory.decodeByteArray(bytes,0,bytes.length,options));image.setScaleType(ImageView.ScaleType.CENTER_CROP);image.setContentDescription("待发送图片 "+(i+1));image.setBackground(bg(BG,12));image.setClipToOutline(true);FrameLayout.LayoutParams ip=new FrameLayout.LayoutParams(dp(72),dp(72),Gravity.BOTTOM|Gravity.START);tile.addView(image,ip);
+            FrameLayout removeTarget=new FrameLayout(this);
+            removeTarget.setContentDescription("移除第 "+(i+1)+" 张图片");
+            removeTarget.setOnClickListener(v->{pendingImages.remove(index);renderAttachments();});
+            TextView remove=label("×",16,Color.WHITE);remove.setGravity(Gravity.CENTER);remove.setBackground(bg(0xCC17302B,11));remove.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+            removeTarget.addView(remove,new FrameLayout.LayoutParams(dp(22),dp(22),Gravity.TOP|Gravity.RIGHT));
+            tile.addView(removeTarget,new FrameLayout.LayoutParams(dp(44),dp(44),Gravity.TOP|Gravity.RIGHT));
+            LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(dp(84),dp(84));tp.rightMargin=dp(6);attachmentStrip.addView(tile,tp);
+        }
+    }
+    private boolean canAddImage(){if(pendingImages.size()+importing>=MAX_PENDING_IMAGES){Toast.makeText(this,"最多添加 6 张图片，请先移除部分图片",Toast.LENGTH_SHORT).show();return false;}return true;}
+    private void pickImage(){if(!canAddImage())return;Intent i=new Intent(Intent.ACTION_GET_CONTENT);i.setType("image/*");i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);try{startActivityForResult(i,31);}catch(android.content.ActivityNotFoundException e){hint.setText("未找到图片选择器");}}
+    private void takePhoto(){if(!canAddImage())return;Intent i=new Intent("android.media.action.IMAGE_CAPTURE");if(i.resolveActivity(getPackageManager())!=null)startActivityForResult(i,32);else Toast.makeText(this,"未找到相机应用",Toast.LENGTH_SHORT).show();}
+    private byte[] encodeImage(Bitmap original)throws Exception{if(original==null)throw new Exception("图片无法解码");Bitmap bitmap=original;int edge=Math.max(bitmap.getWidth(),bitmap.getHeight());if(edge>1600){float scale=1600f/edge;bitmap=Bitmap.createScaledBitmap(original,Math.max(1,Math.round(original.getWidth()*scale)),Math.max(1,Math.round(original.getHeight()*scale)),true);}ByteArrayOutputStream out=new ByteArrayOutputStream();bitmap.compress(Bitmap.CompressFormat.JPEG,78,out);if(bitmap!=original)bitmap.recycle();original.recycle();if(out.size()>6*1024*1024)throw new Exception("图片过大");return out.toByteArray();}
+    private byte[] readImage(Uri uri)throws Exception{
+        if(uri==null||!"content".equals(uri.getScheme()))throw new Exception("图片地址无效");
+        BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;
+        try(InputStream in=getContentResolver().openInputStream(uri)){BitmapFactory.decodeStream(in,null,options);}
+        if(options.outWidth<=0||options.outHeight<=0)throw new Exception("不支持的图片");int sample=1;while(Math.max(options.outWidth,options.outHeight)/sample>1600)sample*=2;
+        options.inJustDecodeBounds=false;options.inSampleSize=sample;
+        try(InputStream in=getContentResolver().openInputStream(uri)){return encodeImage(BitmapFactory.decodeStream(in,null,options));}
+    }
+    @Override protected void onActivityResult(int request,int result,Intent data){
+        super.onActivityResult(request,result,data);if((request!=31&&request!=32)||result!=RESULT_OK||data==null)return;
+        ArrayList<Uri> uris=new ArrayList<>();Bitmap camera=null;
+        if(request==31){if(data.getClipData()!=null){for(int i=0;i<Math.min(data.getClipData().getItemCount(),MAX_PENDING_IMAGES);i++)uris.add(data.getClipData().getItemAt(i).getUri());}else if(data.getData()!=null)uris.add(data.getData());}
+        else if(data.getExtras()!=null){Object value=data.getExtras().get("data");if(value instanceof Bitmap)camera=(Bitmap)value;}
+        int room=MAX_PENDING_IMAGES-pendingImages.size()-importing;
+        if(uris.size()>room||(data.getClipData()!=null&&data.getClipData().getItemCount()>room))Toast.makeText(this,"最多 6 张，仅添加剩余可用数量",Toast.LENGTH_SHORT).show();
+        while(uris.size()>Math.max(0,room))uris.remove(uris.size()-1);
+        final Bitmap photo=room>0?camera:null;int count=uris.size()+(photo==null?0:1);if(count==0)return;importing+=count;hint.setText("正在处理图片…");
+        imageIo.execute(()->{ArrayList<byte[]> added=new ArrayList<>();int failures=0;for(Uri uri:uris)try{added.add(readImage(uri));}catch(Exception|OutOfMemoryError e){failures++;}if(photo!=null)try{added.add(encodeImage(photo));}catch(Exception|OutOfMemoryError e){failures++;}final int failed=failures;runOnUiThread(()->{importing-=count;if(isDestroyed())return;pendingImages.addAll(added);renderAttachments();hint.setText(failed>0?"部分图片无法读取，请重新选择":"已添加 "+pendingImages.size()+" 张，可继续拍照、选图或输入文字");});});
+    }
     @Override protected void onStart(){super.onStart();foreground=true;resumePending();}
-    @Override protected void onStop(){foreground=false;waitGeneration++;handler.removeCallbacksAndMessages(null);if(waitConnection!=null)waitConnection.disconnect();cancelSpeech=true;speechGeneration++;recording=false;if(recognizer!=null)recognizer.cancel();super.onStop();}
-    @Override protected void onDestroy(){super.onDestroy();if(recognizer!=null){recognizer.destroy();recognizer=null;}io.shutdownNow();waits.shutdownNow();}
+    @Override protected void onStop(){foreground=false;waitGeneration++;handler.removeCallbacksAndMessages(null);if(waitConnection!=null)waitConnection.disconnect();super.onStop();}
+    @Override protected void onDestroy(){super.onDestroy();io.shutdownNow();waits.shutdownNow();imageIo.shutdownNow();}
 }

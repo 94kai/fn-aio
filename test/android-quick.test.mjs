@@ -49,10 +49,10 @@ test('快捷入口提供完整音乐播放器并保留受认证服务请求', as
   assert.doesNotMatch(code, /TextView title = text\("快捷控制", 26/);
 });
 
-test('语音聊天提供独立入口、会话选择、语音取消及认证 DSH RPC', async () => {
+test('文字图片聊天提供独立入口、多图草稿及认证 DSH RPC', async () => {
   const manifest = await readFile(new URL('AndroidManifest.xml', root), 'utf8');
   const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
-  assert.match(manifest, /uses-permission android:name="android.permission.RECORD_AUDIO"/);
+  assert.doesNotMatch(manifest, /android.permission.RECORD_AUDIO/);
   assert.match(manifest, /android:name="\.VoiceChatActivity"[^>]*android:exported="true"[^>]*android:launchMode="singleTask"[^>]*android:taskAffinity="top\.fnaio\.direct\.voice"/);
   for (const endpoint of ['session/list', 'session/state', 'session/prompt', 'session/wait']) assert.ok(code.includes(endpoint), endpoint);
   assert.doesNotMatch(code, /session\/page|refreshHistory/);
@@ -60,14 +60,27 @@ test('语音聊天提供独立入口、会话选择、语音取消及认证 DSH 
   assert.match(code, /"afterSeq",fromSeq,"timeoutMs",20_000,"maxMessages",1/);
   assert.match(code, /rpc\("session\/list",json\("_request",new JSONObject\(\)\)/);
   assert.match(code, /json\("request",json\("sessionId",id\)/);
-  for (const action of ['按住说话', '松开发送', '松开取消', '拍照', '图片', '切换会话']) assert.ok(code.includes(action), action);
+  for (const action of ['拍照', '图片', '选择会话 ▾']) assert.ok(code.includes(action), action);
+  assert.match(code, /private void showSessionPicker\(String\[\] titles,String\[\] ids\)/);
+  assert.match(code, /选择要继续记录的对话/);
+
+
+
   assert.match(code, /getCookie\(url\)/);
   assert.match(code, /setInstanceFollowRedirects\(false\)/);
-  assert.match(code, /cancelSpeech/);
+
+  assert.match(code, /MAX_PENDING_IMAGES=6/);
+  assert.match(code, /Intent\.EXTRA_ALLOW_MULTIPLE,true/);
+  assert.match(code, /pendingImages\.remove\(index\)/);
+  assert.match(code, /TextView remove=label\("×"/);
+  assert.match(code, /sendPrompt\(s,new ArrayList<>\(pendingImages\)\)/);
+
+
+  assert.match(code, /"images",thumbs/);
   assert.match(code, /android\.webkit\.CookieManager/);
 });
 
-test('语音页本地先开、持久补收、严格游标与生命周期隔离', async () => {
+test('聊天页本地先开、持久补收、严格游标与生命周期隔离', async () => {
   const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
   const create = code.slice(code.indexOf('@Override public void onCreate'), code.indexOf('private int dp'));
   assert.match(create, /else loadLocalMessages\(\)/);
@@ -83,7 +96,7 @@ test('语音页本地先开、持久补收、严格游标与生命周期隔离',
   assert.match(code, /foreground&&ticket==waitGeneration/);
   assert.match(code, /"voice-pending:"\+base\+":"\+id/);
   assert.match(code, /"session\/wait"\.equals\(method\)\?waits:io/);
-  assert.match(code, /ACTION_CANCEL\)cancelSpeech=true/);
+
 });
 
 test('快捷页自动刷新，音乐列表弹窗可滚动并按音箱隔离', async () => {
@@ -98,4 +111,35 @@ test('快捷页自动刷新，音乐列表弹窗可滚动并按音箱隔离', as
   assert.match(code, /未在播放/);
   assert.match(code, /clean\.equalsIgnoreCase\("null"\)/);
   assert.doesNotMatch(code, /本次还没有播放任务|播放队列/);
+});
+
+
+test('图片只暂存，点击发送后批量提交并在本机消息中展示', async () => {
+  const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
+  const result = code.slice(code.indexOf('@Override protected void onActivityResult'), code.indexOf('@Override protected void onStart'));
+  assert.doesNotMatch(result, /sendPrompt|submitPrompt|session\/prompt/);
+  assert.match(result, /getClipData\(\)/);
+  assert.match(result, /pendingImages\.addAll\(added\)/);
+  assert.match(code, /if\(!s\.isEmpty\(\)\|\|!pendingImages\.isEmpty\(\)\)/);
+  assert.match(code, /for\(byte\[\] image:images\).*content\.put/);
+  assert.match(code, /for\(byte\[\] sent:images\)pendingImages\.remove\(sent\)/);
+  assert.match(code, /entry\.optJSONArray\("images"\)/);
+  assert.match(code, /"images",p\.optJSONArray\("images"\)/);
+  assert.match(code, /image\.setImageBitmap\(bitmap\)/);
+  assert.match(code, /inJustDecodeBounds=true/);
+  assert.match(code, /imageIo\.execute/);
+  assert.match(code, /importing>0/);
+  assert.match(code, /onSaveInstanceState/);
+  assert.match(code, /restoreDraft\(state\)/);
+  assert.doesNotMatch(code, /SpeechRecognizer|MediaRecorder|TextToSpeech/);
+});
+
+
+test('拍照返回不弹确认框，移除图片使用小视觉与独立触控区域', async () => {
+  const code = await readFile(new URL('java/top/fnaio/direct/VoiceChatActivity.java', root), 'utf8');
+  const result = code.slice(code.indexOf('@Override protected void onActivityResult'), code.indexOf('@Override protected void onStart'));
+  assert.doesNotMatch(result, /AlertDialog|照片已加入草稿|setPositiveButton/);
+  assert.match(code, /removeTarget\.addView\(remove,new FrameLayout\.LayoutParams\(dp\(22\),dp\(22\)/);
+  assert.match(code, /tile\.addView\(removeTarget,new FrameLayout\.LayoutParams\(dp\(44\),dp\(44\)/);
+  assert.match(code, /removeTarget\.setOnClickListener/);
 });
